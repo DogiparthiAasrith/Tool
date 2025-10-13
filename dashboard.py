@@ -9,7 +9,7 @@ import datetime
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = "postgresql://postgres:#Aasrith217@localhost:5432/data_ds"
+POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 # ===============================
 # DATABASE FUNCTIONS
@@ -147,4 +147,5 @@ def main():
     st.rerun()
 
 if __name__ == "__main__":
+
     main()
