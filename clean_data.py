@@ -7,7 +7,7 @@ import os
 # CONFIGURATION
 # ===============================
 # --- FIX: Corrected the database password ---
-POSTGRES_URL = "postgresql://postgres:#Aasrith217@localhost:5432/data_ds"
+POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 CLEANED_CSV_PATH = "cleaned_contacts.csv"
 CLEANED_TABLE_NAME = "cleaned_contacts"
 
@@ -77,4 +77,5 @@ def main():
         st.info("ℹ️ No unique contacts found in the database yet. Go to 'Collect Contacts' to add some!")
 
 if __name__ == '__main__':
+
     main()
