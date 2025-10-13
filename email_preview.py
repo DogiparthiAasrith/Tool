@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import smtplib
 import datetime
@@ -147,4 +145,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
