@@ -66,7 +66,6 @@ def setup_database_tables(conn):
         conn.rollback()
 
 def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None):
-    """Logs an event to the 'email_logs' table in the database."""
     try:
         sql = "INSERT INTO email_logs (event_type, recipient_email, subject, status, interest_level, mail_id, body) VALUES (%s, %s, %s, %s, %s, %s, %s);"
         with conn.cursor() as cur:
@@ -79,15 +78,33 @@ def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest
 # ===============================
 # AI & EMAIL FUNCTIONS
 # ===============================
+
+# --- NEW: Hardcoded fallback function ---
+def check_interest_manually(email_body):
+    """Performs a simple keyword search to classify interest as a fallback."""
+    body_lower = email_body.lower()
+    positive_keywords = ["interested", "let's connect", "schedule", "love to", "sounds great", "learn more", "curious"]
+    negative_keywords = ["not interested", "unsubscribe", "remove me", "not a good fit", "not right now", "no thank you"]
+
+    if any(keyword in body_lower for keyword in negative_keywords):
+        return "negative"
+    if any(keyword in body_lower for keyword in positive_keywords):
+        return "positive"
+    
+    return "neutral"
+
 def check_interest_with_openai(email_body):
-    """Classifies email body as positive, negative, or neutral."""
-    prompt = f"Analyze the sentiment of this email reply. Respond with only one word: 'positive', 'negative', or 'neutral'.\n\nEmail: \"{email_body}\"\n\nClassification:"
+    """Tries to classify interest with OpenAI, but falls back to a manual keyword check on failure."""
     try:
+        # ATTEMPT 1: Use OpenAI
+        prompt = f"Analyze the sentiment of this email reply. Respond with only one word: 'positive', 'negative', or 'neutral'.\n\nEmail: \"{email_body}\"\n\nClassification:"
         response = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
         interest = response.choices[0].message.content.strip().lower().replace(".", "")
         return interest if interest in ["positive", "negative", "neutral"] else "neutral"
-    except Exception:
-        return "neutral"
+    except Exception as e:
+        # ATTEMPT 2: Use Fallback
+        st.warning(f"⚠️ OpenAI API failed. Falling back to keyword-based analysis. (Error: {e})")
+        return check_interest_manually(email_body)
 
 def get_unread_emails():
     """Fetches unread emails from the Gmail inbox."""
@@ -120,13 +137,17 @@ def get_unread_emails():
 
 def send_reply(conn, to_email, original_subject, interest_level, mail_id):
     """Sends a reply based on the classified interest level."""
+    # --- MODIFIED: Handle 'positive' vs 'negative'/'neutral' ---
     if interest_level == "positive":
-        subject, body = f"Re: {original_subject}", f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {CALENDLY_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
-    elif interest_level == "negative":
-        subject, body = f"Re: {original_subject}", f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
-    else: # neutral
+        subject = f"Re: {original_subject}"
+        body = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {CALENDLY_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
+    elif interest_level in ["negative", "neutral"]:
+        subject = f"Re: {original_subject}"
+        body = f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services which you can explore here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
+    else:
+        # This case should not be reached
         return
-    
+
     msg = MIMEMultipart(); msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, subject; msg.attach(MIMEText(body, "plain"))
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
@@ -218,8 +239,6 @@ def main():
 
     if st.button("Check Emails & Run Automations"):
         with st.spinner("Processing..."):
-            
-            # --- STEP 1: PRIORITIZE AND PROCESS NEW REPLIES ---
             st.info("--- Checking for new replies ---")
             unread_emails = get_unread_emails()
             
@@ -230,20 +249,14 @@ def main():
                     log_event_to_db(conn, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
                     st.write(f"-> Interest level: **{interest}**")
-                    if interest in ["positive", "negative"]:
-                        send_reply(conn, mail["from"], mail["subject"], interest, mail["id"])
-                    else:
-                        st.info("-> Neutral reply detected. No automated action will be taken for this email.")
+                    # --- MODIFIED: Call send_reply for all cases ---
+                    send_reply(conn, mail["from"], mail["subject"], interest, mail["id"])
                 st.success("✅ Finished processing new replies.")
-            
-            # --- STEP 2: IF NO REPLIES, RUN AUTOMATED TASKS ---
             else:
                 st.write("No new replies to process.")
-                # Since there are no replies, now we check for automated tasks.
                 follow_ups_sent = process_follow_ups(conn)
                 unsubscribes_processed = process_unsubscribes(conn)
                 
-                # Provide a clean final message based on whether any automated tasks ran
                 if follow_ups_sent == 0 and unsubscribes_processed == 0:
                     st.info("No pending automated tasks found.")
                 else:
@@ -252,5 +265,5 @@ def main():
     conn.close()
 
 if __name__ == "__main__":
-
     main()
+
