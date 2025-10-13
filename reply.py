@@ -19,7 +19,7 @@ except Exception:
     client = OpenAI(api_key="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")
 
 # --- Database & Email Credentials ---
-POSTGRES_URL = "postgresql://postgres:#Aasrith217@localhost:5432/data_ds"
+POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 EMAIL = "thridorbit03@gmail.com"
 PASSWORD = "ouhc mftv huww liru"
 SMTP_SERVER = "smtp.gmail.com"
@@ -252,4 +252,5 @@ def main():
     conn.close()
 
 if __name__ == "__main__":
+
     main()
