@@ -4,6 +4,7 @@ import datetime
 import psycopg2
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import os
 
 # ===============================
 # CONFIGURATION
@@ -145,5 +146,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
