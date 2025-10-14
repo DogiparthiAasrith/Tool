@@ -5,6 +5,7 @@ from email_preview import main as email_preview_main
 from reply import main as reply_main
 from dashboard import main as dashboard_main
 from clean_data import main as clean_data_main
+import os
 
 # ===============================
 # PAGE CONFIGURATION
@@ -176,4 +177,5 @@ elif page == "Dashboard":
 # ===============================
 # FOOTER
 # ===============================
+
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
