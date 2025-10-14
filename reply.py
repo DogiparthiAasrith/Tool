@@ -8,6 +8,7 @@ import datetime
 import pandas as pd
 import psycopg2
 from openai import OpenAI
+import os
 
 # ===============================
 # CONFIGURATION
@@ -266,4 +267,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
