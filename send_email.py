@@ -71,7 +71,7 @@ def generate_personalized_email_body(contact_details):
         End with: "Best regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
         """
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a business development expert crafting personalized outreach emails."},
                 {"role": "user", "content": prompt}
@@ -200,6 +200,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
