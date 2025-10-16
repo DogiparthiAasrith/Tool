@@ -127,7 +127,7 @@ def get_db_connection():
 
 def setup_database_tables(conn):
     """
-    FIXED: Ensures the email_logs table exists and has ALL required columns.
+    Ensures the email_logs table exists and has ALL required columns.
     This prevents errors if the script is updated with new columns.
     """
     try:
@@ -158,11 +158,15 @@ def setup_database_tables(conn):
             }
 
             # Step 4: Add any missing columns.
+            schema_updated = False
             for col_name, col_type in columns_to_ensure.items():
                 if col_name not in existing_columns:
                     st.info(f"Schema mismatch detected. Adding column '{col_name}' to 'email_logs'...")
                     cur.execute(f"ALTER TABLE email_logs ADD COLUMN {col_name} {col_type};")
-                    st.success(f"Column '{col_name}' added successfully.")
+                    schema_updated = True
+            
+            if schema_updated:
+                st.success("Database schema updated successfully.")
 
         conn.commit()
     except Exception as e:
@@ -192,6 +196,7 @@ def log_event_to_db(conn, event_type, email_addr, subject, **kwargs):
 # EMAIL & AI FUNCTIONS
 # ================================
 def classify_interest_with_keywords(body):
+    """Fallback classifier using keywords if the LLM fails."""
     body_lower = body.lower()
     positive_keywords = ["interested","let's connect","schedule","love to","sounds great","learn more","curious"]
     negative_keywords = ["not interested","unsubscribe","remove me","not a good fit","not right now","no thank you"]
@@ -251,6 +256,7 @@ def get_unread_emails():
         return []
 
 def send_reply(conn, to_email, orig_subject, interest, mail_id):
+    """Sends a reply based on the classified interest level."""
     subject = f"Re: {orig_subject}"
     meet_link, meet_time = None, None
 
