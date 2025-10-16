@@ -1,109 +1,131 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
-from io import StringIO, BytesIO
+from io import StringIO
 from openai import OpenAI
 import os
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-
-try:
-    client = OpenAI(api_key=st.secrets["openai"]["api_key"])
-except Exception:
-    client = OpenAI(api_key="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")
-
-# --- NEW: Google Drive Configuration ---
-SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
-GDRIVE_FOLDER_NAME = "Morphius AI CSV Backups"
+POSTGRES_URL = os.getenv("POSTGRES_URL")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ===============================
-# NEW: GOOGLE DRIVE UTILITY FUNCTIONS
-# ===============================
-def get_drive_service():
-    """Handles Google authentication and returns an authorized Drive service object."""
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try: creds.refresh(Request())
-            except Exception: creds = None
-        else:
-            if not os.path.exists(CREDENTIALS_FILE): return None
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "w") as token: token.write(creds.to_json())
-    return build("drive", "v3", credentials=creds)
-
-def upload_df_to_drive(df, file_name):
-    """Converts a DataFrame to CSV bytes and uploads it to a specific Google Drive folder."""
-    service = get_drive_service()
-    if not service:
-        st.error("Cannot upload to Google Drive: Service not available.")
-        return
-
-    try:
-        folder_id = None
-        q = f"name='{GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        response = service.files().list(q=q, spaces='drive', fields='files(id)').execute()
-        
-        if not response.get('files'):
-            folder_metadata = {'name': GDRIVE_FOLDER_NAME, 'mimeType': 'application/vnd.google-apps.folder'}
-            folder = service.files().create(body=folder_metadata, fields='id').execute()
-            folder_id = folder.get('id')
-        else:
-            folder_id = response.get('files')[0].get('id')
-
-        csv_bytes = df.to_csv(index=False).encode('utf-8')
-        media = MediaIoBaseUpload(BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
-        
-        file_metadata = {'name': file_name, 'parents': [folder_id]}
-        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        st.success(f"✅ Automatically backed up '{file_name}' to Google Drive.")
-    except Exception as e:
-        st.error(f"❌ An error occurred while saving to Google Drive: {e}")
-
-# ===============================
-# HELPER & EMAIL FUNCTIONS
+# HELPER & CALLBACK FUNCTIONS
 # ===============================
 def get_db_connection():
-    try: return psycopg2.connect(POSTGRES_URL)
+    try:
+        return psycopg2.connect(POSTGRES_URL)
     except psycopg2.OperationalError as e:
-        st.error(f"❌ *Database Connection Error:* {e}")
+        st.error(f"❌ Database Connection Error: {e}")
         return None
 
 def fetch_cleaned_contacts(conn):
-    try: return pd.read_sql("SELECT * FROM cleaned_contacts ORDER BY id DESC", conn)
-    except (Exception, psycopg2.DatabaseError): return pd.DataFrame()
+    try:
+        return pd.read_sql("SELECT * FROM cleaned_contacts ORDER BY id DESC", conn)
+    except (Exception, psycopg2.DatabaseError):
+        st.warning("⚠ Could not fetch contacts. The 'cleaned_contacts' table might not exist yet.")
+        return pd.DataFrame()
+
+# --- CALLBACKS FOR STATE MANAGEMENT ---
+def update_subject(index):
+    """Callback to update the subject in the session state."""
+    widget_key = f"subject_{index}"
+    st.session_state.edited_emails[index]['subject'] = st.session_state[widget_key]
+
+def update_body(index):
+    """Callback to update the body in the session state."""
+    widget_key = f"body_{index}"
+    st.session_state.edited_emails[index]['body'] = st.session_state[widget_key]
+
+# ===============================
+# AI-POWERED LOGIC
+# ===============================
+def decode_prompt_to_domain(prompt):
+    """Uses OpenAI to analyze a prompt and extract a business domain keyword."""
+    try:
+        system_message = """
+        You are an expert business analyst. Your task is to analyze the user's prompt and identify the core business domain or industry sector.
+        Respond with ONLY a single, lowercase keyword for the domain.
+        Examples:
+        - Prompt: "Top 10 colleges in Hyderabad" -> edtech
+        - Prompt: "E-commerce startups" -> commerce
+        - Prompt: "Hospitals in Delhi" -> health
+        - Prompt: "Investment banks" -> finance
+        - Prompt: "Car companies" -> automotive
+        If you cannot determine a clear domain, respond with 'general'.
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=10,
+            temperature=0.1,
+        )
+        domain = response.choices[0].message.content.strip().lower()
+        return domain
+    except Exception as e:
+        st.error(f"Could not analyze prompt due to an API error: {e}")
+        return None
 
 def get_fallback_template(domain, name):
+    """Selects a pre-written template based on the contact's domain."""
     greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
     signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+
     domain_lower = str(domain).lower()
-    if "edtech" in domain_lower: body = "I came across your profile and was impressed by your work in the EdTech space..."
-    elif "commerce" in domain_lower: body = "I noticed your experience in the e-commerce sector and wanted to reach out..."
-    else: body = f"I came across your profile and was interested in your work in the {domain} sector..."
+
+    if "edtech" in domain_lower or "education" in domain_lower:
+        body = f"I came across your profile and was impressed by your work in the EdTech space. At Morphius AI, we're developing innovative solutions to personalize learning and improve educational outcomes.\n\nI believe our work aligns with your expertise and would be keen to connect and share insights."
+    elif "commerce" in domain_lower or "retail" in domain_lower:
+        body = f"I noticed your experience in the e-commerce sector and wanted to reach out. Morphius AI specializes in creating AI-driven tools that enhance customer engagement and optimize online retail operations.\n\nGiven your background, I thought a brief chat about the trends shaping the industry could be mutually beneficial."
+    elif "health" in domain_lower or "medical" in domain_lower:
+        body = f"Your work in the healthcare industry is truly impressive. At Morphius AI, we are focused on leveraging artificial intelligence to streamline diagnostics and improve patient care pathways.\n\nI would value the opportunity to connect with an expert like yourself to discuss the future of healthcare technology."
+    else: # This is the "common mail for other domains"
+        body = f"I came across your profile and was interested in your work in the {domain} sector. At Morphius AI, we build AI solutions to tackle challenges across various industries, and I'm always keen to connect with professionals like yourself.\n\nI would be delighted to connect and learn more about your experience."
+
     return f"{greeting}\n\n{body}{signature}"
 
 def generate_personalized_email_body(contact_details):
+    """Tries to use OpenAI, but falls back to hardcoded templates on any failure."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
+    linkedin = contact_details.get('linkedin_url', '')
+    greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
+    signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+
     try:
-        prompt = f"Write a professional outreach email from Aasrith at Morphius AI to {name or 'a professional'} in the {domain} sector..."
-        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=300)
+        prompt = f"""
+        Write a professional and concise outreach email body.
+        The target is {name or 'a professional'} in the {domain} sector. LinkedIn: {linkedin}.
+        My name is Aasrith from Morphius AI.
+
+        Your entire response should be ONLY the email content, following these rules precisely:
+        1. Start the email body directly with the greeting: "{greeting}"
+        2. After the greeting, add the main message. Briefly introduce Morphius AI's relevance to their industry and express interest in connecting. Keep this main part under 120 words.
+        3. End the email body with the exact closing: "{signature}"
+
+        Do NOT include a "Subject:" line or any other text outside of the email body itself. Your output should be ready to be pasted directly into an email.
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a business development assistant. Your only job is to write the full text for an email body as instructed, without any extra text or formatting."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300, temperature=0.75,
+        )
         return response.choices[0].message.content.strip()
+
     except Exception as e:
-        st.warning(f"⚠️ OpenAI API failed. Using a template. (Error: {e})")
+        st.warning(f"⚠ OpenAI API failed. Using a pre-written template instead. (Error: {e})")
         return get_fallback_template(domain, name)
 
 # ===============================
@@ -114,53 +136,130 @@ def main():
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
+    if 'filter_domain' not in st.session_state:
+        st.session_state.filter_domain = None
 
     conn = get_db_connection()
-    if not conn: return
+    if not conn:
+        return
+
+    st.header("Step 1: Find Contacts with AI")
+    st.markdown("Describe the contacts you're looking for to automatically filter the list by industry.")
+    
+    prompt = st.text_input("Enter your prompt (e.g., 'top 10 colleges in Hyderabad' or 'e-commerce startups')", key="prompt_input")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔍 Filter from Prompt", use_container_width=True):
+            if prompt:
+                with st.spinner("Analyzing prompt and filtering..."):
+                    domain = decode_prompt_to_domain(prompt)
+                    if domain and domain != 'general':
+                        st.session_state.filter_domain = domain
+                        st.success(f"Successfully filtered for domain: *{domain}*")
+                    else:
+                        st.session_state.filter_domain = None
+                        st.info("Prompt was too general or could not be analyzed. Showing all contacts.")
+                st.rerun()
+            else:
+                st.warning("Please enter a prompt first.")
+    with col2:
+        if st.button("🔄 Show All Contacts", use_container_width=True):
+            st.session_state.filter_domain = None
+            st.rerun()
+
+    st.header("Step 2: Select Contacts & Generate Drafts")
+    
     contacts_df = fetch_cleaned_contacts(conn)
     conn.close()
 
     if contacts_df.empty:
-        st.info("No cleaned contacts found.")
+        st.info("No cleaned contacts found. Go to 'Collect Contacts' to add some.")
         return
 
-    st.header("Step 1: Select Contacts & Generate Drafts")
-    if 'contacts_df' not in st.session_state:
-        st.session_state.contacts_df = contacts_df.copy()
-        st.session_state.contacts_df.insert(0, "Select", False)
+    if st.session_state.filter_domain:
+        display_df = contacts_df[contacts_df['domain'].str.contains(st.session_state.filter_domain, case=False, na=False)].copy()
+        st.info(f"Showing {len(display_df)} of {len(contacts_df)} contacts matching the domain '{st.session_state.filter_domain}'")
+    else:
+        display_df = contacts_df.copy()
 
-    edited_df = st.data_editor(st.session_state.contacts_df, hide_index=True, disabled=st.session_state.contacts_df.columns.drop("Select"))
-    st.session_state.contacts_df = edited_df
-    selected_rows = st.session_state.contacts_df[st.session_state.contacts_df['Select']]
+    editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}"
+    if 'Select' not in display_df.columns:
+        display_df.insert(0, "Select", False)
+
+    edited_df = st.data_editor(
+        display_df, hide_index=True, disabled=display_df.columns.drop("Select"), key=editor_key
+    )
+    
+    selected_rows = edited_df[edited_df['Select']]
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
-        drafts = []
+        st.session_state.edited_emails = []
         with st.spinner("Generating drafts..."):
             for _, row in selected_rows.iterrows():
                 to_email = row.get('work_emails') or row.get('personal_emails')
-                if not to_email or pd.isna(to_email): continue
-                body = generate_personalized_email_body(row)
-                drafts.append({"id": row['id'], "name": row['name'], "to_email": to_email, "subject": "Connecting from Morphius AI", "body": body, "contact_details": row.to_dict()})
-        
-        st.session_state.edited_emails = drafts
+                if not to_email or pd.isna(to_email):
+                    continue
 
-        # --- AUTOMATION TRIGGER ---
-        if drafts:
-            drafts_df = pd.DataFrame(drafts)[["name", "to_email", "subject", "body"]]
-            upload_df_to_drive(drafts_df, "morphius_email_drafts.csv")
+                body = generate_personalized_email_body(row)
+                st.session_state.edited_emails.append({
+                    "id": row['id'], "name": row['name'], "to_email": to_email,
+                    "subject": "Connecting from Morphius AI", "body": body,
+                    "contact_details": row.to_dict()
+                })
+        st.rerun()
 
     if st.session_state.edited_emails:
-        st.header("Step 2: Review and Edit Drafts")
+        st.header("Step 3: Review and Edit Drafts")
+        st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
+
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
-                st.session_state.edited_emails[i]['subject'] = st.text_input("Subject", value=email_draft['subject'], key=f"subject_{i}")
-                st.session_state.edited_emails[i]['body'] = st.text_area("Body", value=email_draft['body'], height=250, key=f"body_{i}")
+                
+                # --- FIX: Using on_change for reliable updates ---
+                st.text_input(
+                    "Subject",
+                    value=email_draft['subject'],
+                    key=f"subject_{i}",
+                    on_change=update_subject,
+                    args=(i,)
+                )
+                st.text_area(
+                    "Body",
+                    value=email_draft['body'],
+                    height=250,
+                    key=f"body_{i}",
+                    on_change=update_body,
+                    args=(i,)
+                )
+
+                b_col1, b_col2 = st.columns(2)
+                with b_col1:
+                    if st.button("🔄 Regenerate Body", key=f"regen_{i}", use_container_width=True):
+                        with st.spinner("Asking AI for a new version..."):
+                            new_body = generate_personalized_email_body(email_draft['contact_details'])
+                            st.session_state.edited_emails[i]['body'] = new_body
+                            st.toast(f"Generated a new draft for {email_draft['name']}!")
+                        st.rerun()
+
+                with b_col2:
+                    if st.button("✍ Clear & Write Manually", key=f"clear_{i}", use_container_width=True):
+                        manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+                        st.session_state.edited_emails[i]['body'] = manual_template
+                        st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
+                        st.rerun()
 
         st.markdown("### 📥 Download All Drafts")
-        df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
-        csv_bytes = df_export.to_csv(index=False).encode('utf-8')
-        st.download_button(label="⬇ Download Drafts as CSV", data=csv_bytes, file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
-        st.success("✅ Drafts generated. Proceed to 'Email Preview' to send.")
+        if st.session_state.edited_emails:
+            df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
+            csv_buffer = StringIO()
+            df_export.to_csv(csv_buffer, index=False)
+            st.download_button(
+                label="⬇ Download Drafts as CSV", data=csv_buffer.getvalue(),
+                file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True
+            )
+
+        st.success("✅ All changes saved. Proceed to the 'Email Preview' page to send the final emails.")
 
 if __name__ == "__main__":
     main()
