@@ -6,11 +6,15 @@ import plotly.express as px
 import time
 import datetime
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+POSTGRES_URL = os.getenv("POSTGRES_URL")
 
 # ===============================
 # DATABASE FUNCTIONS
@@ -148,6 +152,4 @@ def main():
     st.rerun()
 
 if __name__ == "__main__":
-
     main()
-
