@@ -12,6 +12,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import os
+import re
 
 # ===============================
 # CONFIGURATION
@@ -48,6 +49,9 @@ def get_calendar_service():
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
     if not creds or not creds.valid:
+        if not os.path.exists(CREDENTIALS_FILE):
+            st.error("❌ Google Calendar `credentials.json` not found. Cannot schedule meetings.")
+            return None
         flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
         creds = flow.run_local_server(port=0)
         with open("token.json", "w") as token:
@@ -74,18 +78,19 @@ def get_next_free_slot(service):
     for event in events:
         start = event["start"].get("dateTime")
         end = event["end"].get("dateTime")
-        busy_times.append(
-            (
-                datetime.datetime.fromisoformat(start.replace("Z", "+00:00")),
-                datetime.datetime.fromisoformat(end.replace("Z", "+00:00")),
+        if start and end: # Only process events with specific times
+            busy_times.append(
+                (
+                    datetime.datetime.fromisoformat(start.replace("Z", "+00:00")),
+                    datetime.datetime.fromisoformat(end.replace("Z", "+00:00")),
+                )
             )
-        )
     current = now
     while current < end_time:
-        if WORK_START_HOUR <= current.hour < WORK_END_HOUR:
+        if WORK_START_HOUR <= current.hour < WORK_END_HOUR and current.weekday() < 5:  # Monday to Friday
             slot_end = current + datetime.timedelta(hours=1)
             overlap = any(s < slot_end and e > current for s, e in busy_times)
-            if not overlap and current.weekday() < 5:  # Avoid weekends
+            if not overlap:
                 return current, slot_end
         current += datetime.timedelta(minutes=30)
     return None, None
@@ -101,7 +106,7 @@ def create_google_meet_event(service, attendee_email):
         "description": "Automated meeting scheduled via AI Email Handler.",
         "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Kolkata"},
         "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Kolkata"},
-        "attendees": [{"email": attendee_email}],
+        "attendees": [{"email": attendee_email}, {"email": EMAIL}],
         "conferenceData": {"createRequest": {"requestId": f"meet-{datetime.datetime.now().timestamp()}"}},
     }
     event = service.events().insert(calendarId="primary", body=event, conferenceDataVersion=1).execute()
@@ -118,37 +123,59 @@ def get_db_connection():
         return None
 
 def setup_database_tables(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS email_logs (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                event_type VARCHAR(50),
-                recipient_email TEXT,
-                subject TEXT,
-                body TEXT,
-                status VARCHAR(50),
-                interest_level VARCHAR(50),
-                mail_id TEXT,
-                meeting_time TIMESTAMP,
-                meet_link TEXT
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS unsubscribe_list (
-                id SERIAL PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                reason TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-    conn.commit()
+    """
+    FIXED: Ensures the 'email_logs' table exists and has ALL required columns.
+    This is now robust and adds any missing columns to prevent runtime errors.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS email_logs (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    event_type VARCHAR(50),
+                    recipient_email TEXT,
+                    subject TEXT,
+                    status VARCHAR(50)
+                );
+            """)
+            
+            columns_to_add = {
+                "body": "TEXT",
+                "interest_level": "VARCHAR(50)",
+                "mail_id": "TEXT",
+                "meeting_time": "TIMESTAMP",
+                "meet_link": "TEXT"
+            }
+            
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='email_logs';")
+            existing_columns = [row[0] for row in cur.fetchall()]
+            
+            for col, col_type in columns_to_add.items():
+                if col not in existing_columns:
+                    cur.execute(f"ALTER TABLE email_logs ADD COLUMN {col} {col_type};")
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS unsubscribe_list (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    reason TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        conn.commit()
+    except Exception as e:
+        st.error(f"❌ Failed to setup database tables: {e}")
+        conn.rollback()
+
 
 def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None, meet_time=None, meet_link=None):
+    """FIXED: This function now correctly maps to the full schema."""
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO email_logs (event_type, recipient_email, subject, status, interest_level, mail_id, body, meeting_time, meet_link) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                """INSERT INTO email_logs (event_type, recipient_email, subject, status, interest_level, mail_id, body, meeting_time, meet_link) 
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (event_type, email_addr, subject, status, interest_level, mail_id, body, meet_time, meet_link),
             )
         conn.commit()
@@ -159,15 +186,36 @@ def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest
 # ===============================
 # AI & EMAIL FUNCTIONS
 # ===============================
-def check_interest_with_openai(email_body):
-    """Classifies email body as positive, negative, or neutral."""
-    prompt = f"Analyze the sentiment of this email reply. Respond only with: positive, negative, or neutral.\n\nEmail: \"{email_body}\""
+
+def classify_interest_with_keywords(email_body):
+    """Fallback function to classify email interest using keywords."""
+    body_lower = email_body.lower()
+    positive_keywords = ["interested", "let's connect", "schedule a call", "sounds good", "like to know more", "tell me more"]
+    negative_keywords = ["not interested", "unsubscribe", "remove me", "not a good fit", "not right now"]
+    
+    if any(re.search(r'\b' + keyword + r'\b', body_lower) for keyword in positive_keywords):
+        return "positive"
+    if any(re.search(r'\b' + keyword + r'\b', body_lower) for keyword in negative_keywords):
+        return "negative"
+    
+    return "neutral"
+
+def classify_email_interest(email_body):
+    """
+    NEW: Tries to classify email body using OpenAI. If it fails, it uses a keyword-based fallback.
+    """
     try:
-        res = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
-        sentiment = res.choices[0].message.content.strip().lower()
-        return sentiment if sentiment in ["positive", "negative", "neutral"] else "neutral"
-    except Exception:
-        return "neutral"
+        prompt = f"Analyze the sentiment of this email reply. Respond only with: positive, negative, or neutral.\n\nEmail: \"{email_body}\""
+        res = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=10, temperature=0)
+        sentiment = res.choices[0].message.content.strip().lower().replace('.', '')
+        if sentiment in ["positive", "negative", "neutral"]:
+            return sentiment
+        # If the LLM returns something unexpected, fall back to keywords
+        st.warning("LLM returned an unexpected value. Falling back to keyword analysis.")
+        return classify_interest_with_keywords(email_body)
+    except Exception as e:
+        st.warning(f"⚠️ OpenAI API failed ({e}). Using keyword-based analysis as a fallback.")
+        return classify_interest_with_keywords(email_body)
 
 def get_unread_emails():
     try:
@@ -198,37 +246,58 @@ def get_unread_emails():
         return []
 
 def send_reply(conn, to_email, original_subject, interest_level, mail_id):
-    """Sends personalized reply and schedules Meet if needed."""
+    """
+    UPDATED: Sends personalized reply.
+    - Positive: Schedules Meet and sends link.
+    - Negative/Neutral: Sends a polite message with a link to other services.
+    """
     service = get_calendar_service()
+    if not service and interest_level == "positive":
+        st.error(f"Could not send meeting link to {to_email} because Google Calendar service is unavailable.")
+        return
+
     meet_link, meet_time = (None, None)
+    subject = f"Re: {original_subject}"
 
     if interest_level == "positive":
         meet_link, meet_time = create_google_meet_event(service, to_email)
-        subject = f"Re: {original_subject}"
+        if not meet_link:
+            st.error(f"Failed to find an available meeting slot for {to_email}. No reply sent.")
+            return
+            
         body = f"""Hi,
 
 Thank you for your positive response! I'm glad to hear you're interested.
 
-I've scheduled a Google Meet for you on {meet_time.strftime('%A, %d %B %Y at %I:%M %p')}.
+I've scheduled a Google Meet for you on {meet_time.strftime('%A, %d %B %Y at %I:%M %p IST')}.
 
 Join using this link: {meet_link}
+
+Looking forward to our conversation.
 
 Best regards,
 Aasrith
 """
-    elif interest_level == "negative":
-        subject = f"Re: {original_subject}"
-        body = f"""Hi,
+    elif interest_level in ["negative", "neutral"]:
+        if interest_level == "negative":
+            body = f"""Hi,
 
-Thank you for getting back to me. I completely understand.
+Thank you for getting back to me. I understand completely.
+"""
+        else: # Neutral
+             body = f"""Hi,
 
-You can still explore our other services here:
+Thanks for your reply.
+"""
+        body += f"""
+If your needs change in the future, you can explore our other services here:
 {OTHER_SERVICES_LINK}
 
 Best regards,
 Aasrith
 """
     else:
+        # This case should not be reached.
         return
 
     msg = MIMEMultipart()
@@ -244,6 +313,7 @@ Aasrith
         st.success(f"✅ Sent '{interest_level}' reply to {to_email}")
     except Exception as e:
         st.error(f"❌ Failed to send reply to {to_email}: {e}")
+        log_event_to_db(conn, f"replied_{interest_level}", to_email, subject, "failed", interest_level, mail_id, body, meet_time, meet_link)
 
 # ===============================
 # MAIN STREAMLIT APP
@@ -254,6 +324,7 @@ def main():
     conn = get_db_connection()
     if not conn:
         return
+    # This now fixes the database table on every run.
     setup_database_tables(conn)
 
     if st.button("Check Emails & Run Automations"):
@@ -263,19 +334,17 @@ def main():
                 st.write(f"Found {len(unread_emails)} new email(s).")
                 for mail in unread_emails:
                     log_event_to_db(conn, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
-                    interest = check_interest_with_openai(mail["body"])
-                    st.write(f"→ {mail['from']} | Interest: *{interest}*")
-                    if interest in ["positive", "negative"]:
+                    interest = classify_email_interest(mail["body"])
+                    st.write(f"→ From: {mail['from']} | Subject: '{mail['subject']}' | Detected Interest: **{interest.capitalize()}**")
+                    if interest in ["positive", "negative", "neutral"]:
                         send_reply(conn, mail["from"], mail["subject"], interest, mail["id"])
                     else:
-                        st.info(f"No action for neutral email from {mail['from']}.")
+                        st.info(f"No action defined for '{interest}' email from {mail['from']}.")
                 st.success("✅ Finished processing new replies.")
             else:
-                st.info("No new unread replies.")
+                st.info("No new unread replies found.")
 
     conn.close()
 
 if __name__ == "__main__":
     main()
-
-
