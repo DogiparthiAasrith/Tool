@@ -20,12 +20,12 @@ import os
 try:
     client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 except Exception:
-    client = OpenAI(api_key="YOUR_OPENAI_API_KEY")
+    client = OpenAI(api_key="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")
 
 # --- Database & Email Credentials ---
-POSTGRES_URL = "postgresql://postgres:G0wth%40mi7@localhost:5433/contactoutscraper_db"
-EMAIL = "2gowthami@gmail.com"
-PASSWORD = "yvouqkmnsnsqwfew"
+POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+EMAIL = "thridorbit03@gmail.com"
+PASSWORD = "ouhc mftv huww liru"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 IMAP_SERVER = "imap.gmail.com"
@@ -277,3 +277,4 @@ def main():
 
 if _name_ == "_main_":
     main()
+
