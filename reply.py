@@ -17,7 +17,7 @@ import os
 try:
     client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 except Exception:
-    client = OpenAI(api_key="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")
+    client = OpenAI(api_key="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")
 
 # --- Database & Email Credentials ---
 POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
@@ -267,5 +267,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
