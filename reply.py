@@ -12,7 +12,9 @@ from googleapiclient.discovery import build
 # ================================
 # CONFIGURATION
 # ================================
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# IMPORTANT: Added Google Drive scope. You may need to delete your 'token.json' 
+# file and re-authenticate to grant permissions for both Calendar and Drive.
+SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
 
@@ -243,7 +245,6 @@ def send_reply(conn, to_email, orig_subject, interest, mail_id):
             server.login(EMAIL, PASSWORD)
             server.sendmail(EMAIL, to_email, msg.as_string())
         
-        # (CORRECTED) Call the robust logging function with the correct variable names
         log_event_to_db(conn, f"replied_{interest}", to_email, subject, "success", body=body,
                         interest_level=interest, mail_id=mail_id, meeting_time=meeting_time, meet_link=meet_link)
         st.success(f"Sent '{interest}' reply to {to_email}")
