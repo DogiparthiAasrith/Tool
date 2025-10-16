@@ -16,23 +16,28 @@ import os
 # ===============================
 # CONFIGURATION
 # ===============================
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
-
+# --- OpenAI API Configuration ---
 try:
     client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 except Exception:
-    client = OpenAI(api_key="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")
+    client = OpenAI(api_key="YOUR_OPENAI_API_KEY")
 
-POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-EMAIL = "thridorbit03@gmail.com"
-PASSWORD = "ouhc mftv huww liru"
+# --- Database & Email Credentials ---
+POSTGRES_URL = "postgresql://postgres:G0wth%40mi7@localhost:5433/contactoutscraper_db"
+EMAIL = "2gowthami@gmail.com"
+PASSWORD = "yvouqkmnsnsqwfew"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 IMAP_SERVER = "imap.gmail.com"
 IMAP_PORT = 993
 
+# --- Google Calendar Config ---
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+CREDENTIALS_FILE = "credentials.json"
+WORK_START_HOUR = 10  # 10 AM
+WORK_END_HOUR = 18    # 6 PM
+
 OTHER_SERVICES_LINK = "https://www.morphius.in/services"
-CREDENTIALS_FILE = "credentials.json"  # OAuth credentials file
 
 # ===============================
 # GOOGLE CALENDAR FUNCTIONS
@@ -40,105 +45,133 @@ CREDENTIALS_FILE = "credentials.json"  # OAuth credentials file
 def get_calendar_service():
     """Authenticate and return a Google Calendar API service instance."""
     creds = None
-    token_file = "token.json"
-
-    if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_file, "w") as token:
+        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
             token.write(creds.to_json())
+    return build("calendar", "v3", credentials=creds)
 
-    service = build("calendar", "v3", credentials=creds)
-    return service
+def get_next_free_slot(service):
+    """Find next available 1-hour slot in working hours."""
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)  # IST
+    end_time = now + datetime.timedelta(days=3)
+    events_result = (
+        service.events()
+        .list(
+            calendarId="primary",
+            timeMin=now.isoformat() + "Z",
+            timeMax=end_time.isoformat() + "Z",
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+    events = events_result.get("items", [])
+    busy_times = []
+    for event in events:
+        start = event["start"].get("dateTime")
+        end = event["end"].get("dateTime")
+        busy_times.append(
+            (
+                datetime.datetime.fromisoformat(start.replace("Z", "+00:00")),
+                datetime.datetime.fromisoformat(end.replace("Z", "+00:00")),
+            )
+        )
+    current = now
+    while current < end_time:
+        if WORK_START_HOUR <= current.hour < WORK_END_HOUR:
+            slot_end = current + datetime.timedelta(hours=1)
+            overlap = any(s < slot_end and e > current for s, e in busy_times)
+            if not overlap and current.weekday() < 5:  # Avoid weekends
+                return current, slot_end
+        current += datetime.timedelta(minutes=30)
+    return None, None
 
-def create_calendar_event(service, attendee_email):
-    """Create a Google Calendar event for a meeting."""
+def create_google_meet_event(service, attendee_email):
+    """Creates a Google Meet event in the next available slot."""
+    start, end = get_next_free_slot(service)
+    if not start:
+        return None, None
     event = {
-        "summary": "Meeting with Interested Contact",
+        "summary": f"Meeting with {attendee_email}",
         "location": "Google Meet",
-        "description": "Automatic meeting scheduled via Streamlit Reply Handler.",
-        "start": {"dateTime": (datetime.datetime.utcnow() + datetime.timedelta(days=1)).isoformat() + "Z"},
-        "end": {"dateTime": (datetime.datetime.utcnow() + datetime.timedelta(days=1, hours=1)).isoformat() + "Z"},
+        "description": "Automated meeting scheduled via AI Email Handler.",
+        "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Kolkata"},
+        "end": {"dateTime": end.isoformat(), "timeZone": "Asia/Kolkata"},
         "attendees": [{"email": attendee_email}],
-        "conferenceData": {
-            "createRequest": {"requestId": f"meet-{datetime.datetime.now().timestamp()}"}
-        },
+        "conferenceData": {"createRequest": {"requestId": f"meet-{datetime.datetime.now().timestamp()}"}},
     }
-
     event = service.events().insert(calendarId="primary", body=event, conferenceDataVersion=1).execute()
-    return event.get("hangoutLink", "(Meeting link unavailable)")
+    return event.get("hangoutLink"), start
 
 # ===============================
-# DATABASE & EMAIL FUNCTIONS
+# DATABASE FUNCTIONS
 # ===============================
 def get_db_connection():
     try:
         return psycopg2.connect(POSTGRES_URL)
     except psycopg2.OperationalError as e:
-        st.error(f"❌ Database Error: {e}")
+        st.error(f"❌ Database Connection Error: {e}")
         return None
 
 def setup_database_tables(conn):
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS email_logs (
-                    id SERIAL PRIMARY KEY, timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                    event_type VARCHAR(50), recipient_email TEXT, subject TEXT,
-                    body TEXT, status VARCHAR(50), interest_level VARCHAR(50), mail_id TEXT
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS unsubscribe_list (
-                    id SERIAL PRIMARY KEY, email TEXT UNIQUE, reason TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-        conn.commit()
-    except Exception as e:
-        st.error(f"❌ DB Setup Failed: {e}")
-        conn.rollback()
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                event_type VARCHAR(50),
+                recipient_email TEXT,
+                subject TEXT,
+                body TEXT,
+                status VARCHAR(50),
+                interest_level VARCHAR(50),
+                mail_id TEXT,
+                meeting_time TIMESTAMP,
+                meet_link TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS unsubscribe_list (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                reason TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    conn.commit()
 
-def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None):
+def log_event_to_db(conn, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None, meet_time=None, meet_link=None):
     try:
-        sql = "INSERT INTO email_logs (event_type, recipient_email, subject, status, interest_level, mail_id, body) VALUES (%s,%s,%s,%s,%s,%s,%s)"
         with conn.cursor() as cur:
-            cur.execute(sql, (event_type, email_addr, subject, status, interest_level, mail_id, body))
+            cur.execute(
+                "INSERT INTO email_logs (event_type, recipient_email, subject, status, interest_level, mail_id, body, meeting_time, meet_link) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (event_type, email_addr, subject, status, interest_level, mail_id, body, meet_time, meet_link),
+            )
         conn.commit()
     except Exception as e:
-        st.error(f"❌ DB Logging Failed: {e}")
+        st.error(f"❌ Failed to log event: {e}")
         conn.rollback()
 
 # ===============================
-# EMAIL HANDLER
+# AI & EMAIL FUNCTIONS
 # ===============================
-def check_interest_manually(email_body):
-    body = email_body.lower()
-    pos = ["interested", "schedule", "connect", "love to", "sounds good"]
-    neg = ["not interested", "unsubscribe", "no thanks"]
-    if any(k in body for k in pos): return "positive"
-    if any(k in body for k in neg): return "negative"
-    return "neutral"
-
 def check_interest_with_openai(email_body):
+    """Classifies email body as positive, negative, or neutral."""
+    prompt = f"Analyze the sentiment of this email reply. Respond only with: positive, negative, or neutral.\n\nEmail: \"{email_body}\""
     try:
-        prompt = f"Classify this email reply as positive, negative, or neutral:\n\n{email_body}"
-        res = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=5)
-        val = res.choices[0].message.content.strip().lower()
-        return val if val in ["positive", "negative", "neutral"] else "neutral"
-    except Exception as e:
-        st.warning(f"OpenAI failed → Using fallback ({e})")
-        return check_interest_manually(email_body)
+        res = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
+        sentiment = res.choices[0].message.content.strip().lower()
+        return sentiment if sentiment in ["positive", "negative", "neutral"] else "neutral"
+    except Exception:
+        return "neutral"
 
 def get_unread_emails():
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
         _, data = mail.search(None, "(UNSEEN)")
@@ -161,31 +194,45 @@ def get_unread_emails():
         mail.logout()
         return emails
     except Exception as e:
-        st.error(f"❌ Fetch Emails Error: {e}")
+        st.error(f"❌ Failed to fetch emails: {e}")
         return []
 
-def send_reply(conn, to_email, subject, interest_level, mail_id, event_link=None):
+def send_reply(conn, to_email, original_subject, interest_level, mail_id):
+    """Sends personalized reply and schedules Meet if needed."""
+    service = get_calendar_service()
+    meet_link, meet_time = (None, None)
+
     if interest_level == "positive":
-        meeting_text = f"\nLet's meet using this Google Meet link: {event_link}" if event_link else ""
+        meet_link, meet_time = create_google_meet_event(service, to_email)
+        subject = f"Re: {original_subject}"
         body = f"""Hi,
 
-Thank you for your interest! I'm glad you'd like to connect.{meeting_text}
+Thank you for your positive response! I'm glad to hear you're interested.
 
-Looking forward to our discussion.
+I've scheduled a Google Meet for you on {meet_time.strftime('%A, %d %B %Y at %I:%M %p')}.
+
+Join using this link: {meet_link}
 
 Best regards,
-Aasrith"""
-    else:
+Aasrith
+"""
+    elif interest_level == "negative":
+        subject = f"Re: {original_subject}"
         body = f"""Hi,
 
-Thank you for replying. You can explore our other services here:
+Thank you for getting back to me. I completely understand.
+
+You can still explore our other services here:
 {OTHER_SERVICES_LINK}
 
 Best regards,
-Aasrith"""
+Aasrith
+"""
+    else:
+        return
 
     msg = MIMEMultipart()
-    msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, f"Re: {subject}"
+    msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, subject
     msg.attach(MIMEText(body, "plain"))
 
     try:
@@ -193,16 +240,17 @@ Aasrith"""
             server.starttls()
             server.login(EMAIL, PASSWORD)
             server.sendmail(EMAIL, to_email, msg.as_string())
-        st.success(f"✅ Sent {interest_level} reply to {to_email}")
-        log_event_to_db(conn, f"replied_{interest_level}", to_email, subject, "success", interest_level, mail_id, body)
+        log_event_to_db(conn, f"replied_{interest_level}", to_email, subject, "success", interest_level, mail_id, body, meet_time, meet_link)
+        st.success(f"✅ Sent '{interest_level}' reply to {to_email}")
     except Exception as e:
-        st.error(f"❌ Reply Send Failed: {e}")
+        st.error(f"❌ Failed to send reply to {to_email}: {e}")
 
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Automated Email Reply Handler (with Google Calendar Integration)")
+    st.title("📧 Automated Reply Handler + Smart Scheduler")
+
     conn = get_db_connection()
     if not conn:
         return
@@ -212,17 +260,19 @@ def main():
         with st.spinner("Processing incoming emails..."):
             unread_emails = get_unread_emails()
             if unread_emails:
-                calendar_service = get_calendar_service()
+                st.write(f"Found {len(unread_emails)} new email(s).")
                 for mail in unread_emails:
-                    st.info(f"Processing reply from {mail['from']}")
+                    log_event_to_db(conn, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
-                    event_link = None
-                    if interest == "positive":
-                        event_link = create_calendar_event(calendar_service, mail["from"])
-                    send_reply(conn, mail["from"], mail["subject"], interest, mail["id"], event_link)
-                st.success("✅ Finished processing all replies.")
+                    st.write(f"→ {mail['from']} | Interest: *{interest}*")
+                    if interest in ["positive", "negative"]:
+                        send_reply(conn, mail["from"], mail["subject"], interest, mail["id"])
+                    else:
+                        st.info(f"No action for neutral email from {mail['from']}.")
+                st.success("✅ Finished processing new replies.")
             else:
-                st.info("No new unread emails found.")
+                st.info("No new unread replies.")
+
     conn.close()
 
 if _name_ == "_main_":
