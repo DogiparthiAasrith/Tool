@@ -5,15 +5,19 @@ import psycopg2
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = "thridorbit03@gmail.com"
-SENDER_PASSWORD = "ouhc mftv huww liru"
+POSTGRES_URL = os.getenv("POSTGRES_URL")
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
 
 # ===============================
 # HELPER FUNCTIONS
@@ -29,12 +33,13 @@ def get_db_connection():
 
 def setup_email_log_table(conn):
     """
-    Ensures the 'email_logs' table exists and has all required columns.
-    This function is now robust and adds any missing columns.
+    Ensures the 'email_logs' table exists and has all required columns,
+    including the 'body' column.
     """
     try:
         with conn.cursor() as cur:
-            # Step 1: Create the table with a base schema if it doesn't exist.
+            # Step 1: Create the table with most columns if it doesn't exist.
+            # This is safe to run every time.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS email_logs (
                     id SERIAL PRIMARY KEY,
@@ -45,28 +50,18 @@ def setup_email_log_table(conn):
                     status VARCHAR(50)
                 );
             """)
-
-            # Step 2: Check for and add any missing columns to avoid errors.
-            # This makes the schema management resilient.
-            columns_to_add = {
-                "body": "TEXT",
-                "interest_level": "VARCHAR(50)",
-                "mail_id": "TEXT",
-                "meeting_time": "TIMESTAMP",
-                "meet_link": "TEXT"
-            }
             
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='email_logs';")
-            existing_columns = [row[0] for row in cur.fetchall()]
-            
-            schema_updated = False
-            for col, col_type in columns_to_add.items():
-                if col not in existing_columns:
-                    st.info(f"Updating 'email_logs' table schema to add '{col}' column...")
-                    cur.execute(f"ALTER TABLE email_logs ADD COLUMN {col} {col_type};")
-                    schema_updated = True
-            
-            if schema_updated:
+            # --- FIX: Check if the 'body' column exists and add it if it's missing ---
+            # Step 2: Check the information_schema for the 'body' column.
+            cur.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='email_logs' AND column_name='body';
+            """)
+            if cur.fetchone() is None:
+                # Step 3: If the column is not found, add it to the table.
+                st.info("Updating 'email_logs' table schema to add 'body' column...")
+                cur.execute("ALTER TABLE email_logs ADD COLUMN body TEXT;")
                 st.success("Schema updated successfully.")
 
         conn.commit()
@@ -136,7 +131,7 @@ def main():
             st.error("Cannot send emails without a database connection for logging.")
             return
         
-        # This now ensures all columns exist before trying to log.
+        # This now ensures the 'body' column exists before trying to log.
         setup_email_log_table(conn) 
         
         success_count = 0
