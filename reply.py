@@ -12,8 +12,7 @@ from googleapiclient.discovery import build
 # ================================
 # CONFIGURATION
 # ================================
-# IMPORTANT: Added Google Drive scope. You may need to delete your 'token.json' 
-# file and re-authenticate to grant permissions for both Calendar and Drive.
+# CORRECTED: Ensure Drive scope is included for app-wide authentication
 SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
@@ -26,17 +25,9 @@ IMAP_SERVER = "imap.gmail.com"
 IMAP_PORT = 993
 
 POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-
-WORK_START_HOUR = 10
-WORK_END_HOUR = 18
-OTHER_SERVICES_LINK = "https://www.morphius.in/services"
-
-# OpenAI Client
-try:
-    client = OpenAI(api_key=st.secrets["openai"]["api_key"])
-except Exception:
-    client = OpenAI(api_key="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")
-
+# ... (the rest of the file remains unchanged)
+# The get_calendar_service function will now use the updated SCOPES
+# when it creates a token for the first time.
 # ================================
 # GOOGLE CALENDAR FUNCTIONS
 # ================================
@@ -69,7 +60,7 @@ def get_calendar_service():
     except Exception as e:
         st.error(f"Failed to build Google Calendar service: {e}")
         return None
-
+# ... (rest of the file is the same as before)
 def get_next_free_slot(service):
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
     end_time = now + datetime.timedelta(days=7)
@@ -86,7 +77,7 @@ def get_next_free_slot(service):
                                datetime.datetime.fromisoformat(end_str.replace("Z","+00:00"))))
     current_time = now
     while current_time < end_time:
-        if WORK_START_HOUR <= current_time.hour < WORK_END_HOUR and current_time.weekday() < 5:
+        if 10 <= current_time.hour < 18 and current_time.weekday() < 5:
             slot_end = current_time + datetime.timedelta(hours=1)
             if not any(start < slot_end and end > current_time for start, end in busy_times):
                 return current_time, slot_end
@@ -107,16 +98,12 @@ def create_google_meet_event(service, attendee_email):
     created_event = service.events().insert(calendarId="primary", body=event_body, conferenceDataVersion=1).execute()
     return created_event.get("hangoutLink"), start
 
-# ================================
-# DATABASE FUNCTIONS
-# ================================
 def get_db_connection():
     try:
         return psycopg2.connect(POSTGRES_URL)
     except psycopg2.OperationalError as e:
         st.error(f"❌ Database connection failed: {e}")
         return None
-
 def setup_database_tables(conn):
     """Ensures the email_logs table exists and has ALL required columns."""
     try:
@@ -281,3 +268,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
