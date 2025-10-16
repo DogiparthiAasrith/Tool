@@ -3,148 +3,76 @@ import requests
 import pandas as pd
 import os
 import psycopg2
-from io import BytesIO
-import json
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ===============================
 # CONFIGURATION
 # ===============================
-CONTACTOUT_API_TOKEN = "9Oe9pEW8Go2QkNiltRQsauf9"
+CONTACTOUT_API_TOKEN = os.getenv("CONTACTOUT_API_TOKEN")
+POSTGRES_URL = os.getenv("POSTGRES_URL")
 API_BASE = "https://api.contactout.com/v1/people/enrich"
-POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
-GDRIVE_FOLDER_NAME = "Morphius AI CSV Backups"
 
 # ===============================
-# GOOGLE DRIVE UTILITY FUNCTIONS (CORRECTED & ROBUST)
-# ===============================
-def get_drive_service():
-    """
-    Handles Google authentication robustly. It now correctly handles a failed
-    token refresh by forcing a new authentication flow instead of crashing.
-    """
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        except (ValueError, json.JSONDecodeError):
-            st.warning("⚠️ Your 'token.json' was corrupted and has been removed. Please re-authenticate.")
-            os.remove(TOKEN_FILE)
-            creds = None
-
-    # --- ROBUST FIX: This logic block correctly handles all failure cases ---
-    if not creds or not creds.valid:
-        # First, try to refresh the token if it's just expired
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                st.warning(f"Could not refresh token (likely due to changed permissions): {e}. A new login is required.")
-                creds = None # IMPORTANT: Nullify creds so the next block is triggered
-
-        # If there are no credentials after the refresh attempt, do a full login
-        if not creds:
-            if not os.path.exists(CREDENTIALS_FILE):
-                st.error(f"Missing Google credentials file: `{CREDENTIALS_FILE}`.")
-                return None
-            try:
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
-            except Exception as e:
-                st.error(f"Authentication failed: {e}")
-                return None # Critical failure, cannot proceed
-
-    # If we have successfully obtained credentials, save them
-    try:
-        with open(TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
-        return build("drive", "v3", credentials=creds)
-    except Exception as e:
-        st.error(f"Failed to build Google Drive service or save token: {e}")
-        return None
-
-def upload_df_to_drive(df, file_name):
-    """Converts a DataFrame to CSV bytes and uploads it to a specific Google Drive folder."""
-    service = get_drive_service()
-    if not service:
-        st.error("Cannot upload to Google Drive: Authentication was not completed.")
-        return
-
-    try:
-        # Find or create the target folder
-        folder_id = None
-        q_folder = f"name='{GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        response = service.files().list(q=q_folder, spaces='drive', fields='files(id)').execute()
-        
-        if not response.get('files'):
-            folder_metadata = {'name': GDRIVE_FOLDER_NAME, 'mimeType': 'application/vnd.google-apps.folder'}
-            folder = service.files().create(body=folder_metadata, fields='id').execute()
-            folder_id = folder.get('id')
-        else:
-            folder_id = response.get('files')[0].get('id')
-
-        csv_bytes = df.to_csv(index=False).encode('utf-8')
-        media = MediaIoBaseUpload(BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
-        
-        # Find out if the file already exists in the folder
-        file_id = None
-        q_file = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
-        response_files = service.files().list(q=q_file, spaces='drive', fields='files(id)').execute()
-        if response_files.get('files'):
-            file_id = response_files.get('files')[0].get('id')
-
-        if file_id:
-            # If it exists, update it
-            service.files().update(fileId=file_id, media_body=media).execute()
-            st.success(f"✅ Automatically updated '{file_name}' in Google Drive.")
-        else:
-            # If it doesn't exist, create it
-            file_metadata = {'name': file_name, 'parents': [folder_id]}
-            service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-            st.success(f"✅ Automatically saved '{file_name}' to Google Drive.")
-
-    except Exception as e:
-        st.error(f"❌ An error occurred while saving to Google Drive: {e}")
-
-# ===============================
-# DATABASE & API FUNCTIONS
-# (No changes in the functions below this point)
+# UTILITIES
 # ===============================
 def enrich_people(payload):
-    headers = {"Content-Type": "application/json", "Accept": "application/json", "token": CONTACTOUT_API_TOKEN}
+    """Makes an API call to ContactOut and handles potential errors gracefully."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "token": CONTACTOUT_API_TOKEN
+    }
     st.info("🔄 Calling ContactOut API...")
     try:
         resp = requests.post(API_BASE, headers=headers, json=payload)
+
+        # --- IMPROVED ERROR HANDLING ---
+        # Check if the request was successful (e.g., status code 200)
         if resp.status_code != 200:
-            st.error(f"ContactOut API Error (Status: {resp.status_code})")
-            try: st.json(resp.json())
-            except ValueError: st.text(resp.text)
+            st.error(f"ContactOut API returned an error (Status Code: {resp.status_code})")
+            # Try to print the detailed error message from the API
+            try:
+                st.json(resp.json())
+            except ValueError:
+                st.text(resp.text) # If the error isn't in JSON format, show the raw text
+
         return resp.status_code, resp.json()
+
     except requests.exceptions.RequestException as e:
-        st.error(f"Network error contacting ContactOut API: {e}")
+        # This catches network errors (e.g., can't connect to the server)
+        st.error(f"A network error occurred while contacting the ContactOut API: {e}")
         return None, None
     except ValueError:
-        return resp.status_code, {"error": "Received non-JSON response from API"}
+        # This catches errors if the response from the API is not valid JSON
+        return resp.status_code, resp.text
+
 
 def extract_relevant_fields(response, original_payload={}):
     profile = response.get("profile", response)
     linkedin_url = profile.get("linkedin_url")
+
     if not linkedin_url and "linkedin_url" in original_payload:
         linkedin_url = original_payload["linkedin_url"]
+
     if isinstance(linkedin_url, str):
         linkedin_url = linkedin_url.rstrip('/')
-    return {"name": profile.get("full_name"), "linkedin_url": linkedin_url, "work_emails": ", ".join(profile.get("work_email", [])), "personal_emails": ", ".join(profile.get("personal_email", [])), "phones": ", ".join(profile.get("phone", [])), "domain": profile.get("company", {}).get("domain") if profile.get("company") else None}
+
+    return {
+        "name": profile.get("full_name"),
+        "linkedin_url": linkedin_url,
+        "work_emails": ", ".join(profile.get("work_email", [])),
+        "personal_emails": ", ".join(profile.get("personal_email", [])),
+        "phones": ", ".join(profile.get("phone", [])),
+        "domain": profile.get("company", {}).get("domain") if profile.get("company") else None
+    }
 
 def get_db_connection():
-    try: return psycopg2.connect(POSTGRES_URL)
+    try:
+        return psycopg2.connect(POSTGRES_URL)
     except psycopg2.OperationalError as e:
         st.error(f"❌ **Database Connection Error:** {e}")
         return None
@@ -154,82 +82,122 @@ def setup_database_tables():
     if not conn: return
     try:
         with conn.cursor() as cur:
-            cur.execute("""CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT, work_emails TEXT, personal_emails TEXT, phones TEXT, domain TEXT, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);""")
-            cur.execute("""CREATE TABLE IF NOT EXISTS cleaned_contacts (id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT UNIQUE NOT NULL, work_emails TEXT, personal_emails TEXT, phones TEXT, domain TEXT, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);""")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT,
+                    work_emails TEXT, personal_emails TEXT, phones TEXT,
+                    domain TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cleaned_contacts (
+                    id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT UNIQUE NOT NULL,
+                    work_emails TEXT, personal_emails TEXT, phones TEXT,
+                    domain TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
             conn.commit()
+    except (Exception, psycopg2.DatabaseError) as error:
+        st.error(f"❌ Could not set up database tables: {error}")
     finally:
         if conn: conn.close()
 
 def save_to_postgres(conn, dict_data):
     sql = "INSERT INTO contacts (name, linkedin_url, work_emails, personal_emails, phones, domain) VALUES (%s, %s, %s, %s, %s, %s);"
-    data_tuple = (dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"), dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain"))
-    with conn.cursor() as cur: cur.execute(sql, data_tuple)
-    st.success(f"✅ Saved '{dict_data.get('name') or 'Unknown'}' to raw contacts log.")
+    data_tuple = (
+        dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"),
+        dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain")
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, data_tuple)
+    contact_name = dict_data.get("name") or "Unknown Name"
+    st.success(f"✅ Saved '{contact_name}' to raw contacts log.")
 
 def save_to_cleaned_postgres(conn, dict_data):
-    if not dict_data.get("linkedin_url"): return False
+    if not dict_data.get("linkedin_url"):
+        st.warning("⚠️ Skipped saving to cleaned contacts: LinkedIn URL is missing.")
+        return
     sql = "INSERT INTO cleaned_contacts (name, linkedin_url, work_emails, personal_emails, phones, domain) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (linkedin_url) DO NOTHING;"
-    data_tuple = (dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"), dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain"))
+    data_tuple = (
+        dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"),
+        dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain")
+    )
     with conn.cursor() as cur:
         cur.execute(sql, data_tuple)
         if cur.rowcount > 0:
             st.success(f"✅ Added new unique contact '{dict_data.get('name')}' to cleaned data.")
-            return True
         else:
             st.info(f"ℹ️ Contact '{dict_data.get('name')}' already exists in cleaned data.")
-            return False
-
-def sync_cleaned_contacts_to_drive():
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        df = pd.read_sql("SELECT * FROM cleaned_contacts ORDER BY id DESC", conn)
-        if not df.empty:
-            upload_df_to_drive(df, "cleaned_contacts.csv")
-    finally:
-        if conn: conn.close()
 
 def process_enrichment(payload):
-    if not payload: return
-    status, response = enrich_people(payload)
-    if status != 200 or not isinstance(response, dict): return
+    if not payload:
+        st.warning("⚠️ No valid input provided.")
+        return
 
-    enriched_data = extract_relevant_fields(response, payload)
-    st.success("✅ Enriched Data:")
-    st.json(enriched_data)
-    
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        save_to_postgres(conn, enriched_data)
-        new_contact_added = save_to_cleaned_postgres(conn, enriched_data)
-        conn.commit()
-        if new_contact_added:
-            sync_cleaned_contacts_to_drive()
-    except (Exception, psycopg2.DatabaseError) as error:
-        st.error(f"❌ An unexpected error occurred: {error}")
-        conn.rollback()
-    finally:
-        if conn: conn.close()
+    status, response = enrich_people(payload)
+
+    # Handle case where the network request failed completely
+    if status is None:
+        return
+
+    st.write(f"API HTTP Status: {status}")
+
+    if status == 200 and isinstance(response, dict):
+        enriched_data = extract_relevant_fields(response, payload)
+        st.success("✅ Enriched Data:")
+        st.json(enriched_data)
+
+        conn = get_db_connection()
+        if not conn: return
+        try:
+            save_to_postgres(conn, enriched_data)
+            save_to_cleaned_postgres(conn, enriched_data)
+            conn.commit()
+        except (Exception, psycopg2.DatabaseError) as error:
+            st.error(f"❌ Error during database operation: {error}")
+            conn.rollback()
+        finally:
+            if conn: conn.close()
+    elif status == 404:
+        st.warning("🟡 Contact Not Found.")
 
 def main():
     st.title("Contact Information Collector")
     setup_database_tables()
-    choice = st.selectbox("Choose an input type to enrich:", ("Email", "LinkedIn URL", "Name + Company", "Company Domain"))
-    
+
+    choice = st.selectbox(
+        "Choose an input type to enrich:",
+        ("Email", "LinkedIn URL", "Name + Company", "Company Domain")
+    )
+
+    payload = {}
+    include_fields = ["work_email", "personal_email", "phone"]
+
     if choice == 'Email':
         email = st.text_input("Enter the email address:")
-        if st.button("Enrich from Email") and email:
-            process_enrichment({"email": email, "include": ["work_email", "personal_email", "phone"]})
+        if st.button("Enrich from Email"):
+            if email:
+                payload = {"email": email, "include": include_fields}
+                process_enrichment(payload)
     elif choice == 'LinkedIn URL':
         linkedin_url = st.text_input("Enter the LinkedIn URL:")
-        if st.button("Enrich from LinkedIn URL") and linkedin_url:
-            process_enrichment({"linkedin_url": linkedin_url, "include": ["work_email", "personal_email", "phone"]})
+        if st.button("Enrich from LinkedIn URL"):
+            if linkedin_url:
+                payload = {"linkedin_url": linkedin_url, "include": include_fields}
+                process_enrichment(payload)
     elif choice == 'Name + Company':
         name = st.text_input("Enter the full name:")
         company = st.text_input("Enter the company name:")
-        if st.button("Enrich from Name + Company") and name and company:
-            process_enrichment({"full_name": name, "company": [company], "include": ["work_email", "personal_email", "phone"]})
+        if st.button("Enrich from Name + Company"):
+            if name and company:
+                payload = {"full_name": name, "company": [company], "include": include_fields}
+                process_enrichment(payload)
+    elif choice == 'Company Domain':
+        domain = st.text_input("Enter the company domain:")
+        if st.button("Enrich from Company Domain"):
+            if domain:
+                payload = {"company_domain": domain, "include": include_fields}
+                process_enrichment(payload)
 
 if __name__ == '__main__':
     main()
