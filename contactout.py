@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import psycopg2
 from io import BytesIO
-import json # Import the json library to catch the specific error
+import json
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -18,39 +18,40 @@ CONTACTOUT_API_TOKEN = "9Oe9pEW8Go2QkNiltRQsauf9"
 API_BASE = "https://api.contactout.com/v1/people/enrich"
 POSTGRES_URL = "postgresql://neondb_owner:npg_onVe8gqWs4lm@ep-solitary-bush-addf9gpm-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-# Google Drive Configuration
 SCOPES = ["https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
 GDRIVE_FOLDER_NAME = "Morphius AI CSV Backups"
 
 # ===============================
-# GOOGLE DRIVE UTILITY FUNCTIONS (CORRECTED)
+# GOOGLE DRIVE UTILITY FUNCTIONS (CORRECTED & ROBUST)
 # ===============================
 def get_drive_service():
     """
-    Handles Google authentication robustly. It now detects and handles a corrupted
-    token.json file automatically.
+    Handles Google authentication robustly. It now correctly handles a failed
+    token refresh by forcing a new authentication flow instead of crashing.
     """
     creds = None
     if os.path.exists(TOKEN_FILE):
         try:
-            # --- FIX: Added a try-except block to catch a corrupted token.json ---
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
         except (ValueError, json.JSONDecodeError):
-            st.warning("⚠️ Your 'token.json' authentication file is corrupted. Please re-authenticate.")
-            # Setting creds to None will trigger the re-authentication flow.
+            st.warning("⚠️ Your 'token.json' was corrupted and has been removed. Please re-authenticate.")
+            os.remove(TOKEN_FILE)
             creds = None
-            os.remove(TOKEN_FILE) # Safely remove the bad token file
 
+    # --- ROBUST FIX: This logic block correctly handles all failure cases ---
     if not creds or not creds.valid:
+        # First, try to refresh the token if it's just expired
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
             except Exception as e:
-                st.error(f"Could not refresh Google token: {e}. Please re-authenticate.")
-                creds = None
-        else:
+                st.warning(f"Could not refresh token (likely due to changed permissions): {e}. A new login is required.")
+                creds = None # IMPORTANT: Nullify creds so the next block is triggered
+
+        # If there are no credentials after the refresh attempt, do a full login
+        if not creds:
             if not os.path.exists(CREDENTIALS_FILE):
                 st.error(f"Missing Google credentials file: `{CREDENTIALS_FILE}`.")
                 return None
@@ -58,29 +59,30 @@ def get_drive_service():
                 flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
                 creds = flow.run_local_server(port=0)
             except Exception as e:
-                st.error(f"Could not start authentication server: {e}")
-                return None
-        # Save the new, valid credentials to the token file
+                st.error(f"Authentication failed: {e}")
+                return None # Critical failure, cannot proceed
+
+    # If we have successfully obtained credentials, save them
+    try:
         with open(TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
-    try:
         return build("drive", "v3", credentials=creds)
     except Exception as e:
-        st.error(f"Failed to build Google Drive service: {e}")
+        st.error(f"Failed to build Google Drive service or save token: {e}")
         return None
-
 
 def upload_df_to_drive(df, file_name):
     """Converts a DataFrame to CSV bytes and uploads it to a specific Google Drive folder."""
     service = get_drive_service()
     if not service:
-        st.error("Cannot upload to Google Drive: Authentication failed or was cancelled.")
+        st.error("Cannot upload to Google Drive: Authentication was not completed.")
         return
 
     try:
+        # Find or create the target folder
         folder_id = None
-        q = f"name='{GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        response = service.files().list(q=q, spaces='drive', fields='files(id)').execute()
+        q_folder = f"name='{GDRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        response = service.files().list(q=q_folder, spaces='drive', fields='files(id)').execute()
         
         if not response.get('files'):
             folder_metadata = {'name': GDRIVE_FOLDER_NAME, 'mimeType': 'application/vnd.google-apps.folder'}
@@ -92,17 +94,20 @@ def upload_df_to_drive(df, file_name):
         csv_bytes = df.to_csv(index=False).encode('utf-8')
         media = MediaIoBaseUpload(BytesIO(csv_bytes), mimetype='text/csv', resumable=True)
         
-        file_metadata = {'name': file_name, 'parents': [folder_id]}
-        # --- FIX: Check if file already exists to update it instead of creating duplicates ---
+        # Find out if the file already exists in the folder
         file_id = None
-        response_files = service.files().list(q=f"name='{file_name}' and '{folder_id}' in parents and trashed=false", spaces='drive', fields='files(id)').execute()
+        q_file = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
+        response_files = service.files().list(q=q_file, spaces='drive', fields='files(id)').execute()
         if response_files.get('files'):
             file_id = response_files.get('files')[0].get('id')
 
         if file_id:
+            # If it exists, update it
             service.files().update(fileId=file_id, media_body=media).execute()
             st.success(f"✅ Automatically updated '{file_name}' in Google Drive.")
         else:
+            # If it doesn't exist, create it
+            file_metadata = {'name': file_name, 'parents': [folder_id]}
             service.files().create(body=file_metadata, media_body=media, fields='id').execute()
             st.success(f"✅ Automatically saved '{file_name}' to Google Drive.")
 
@@ -111,6 +116,7 @@ def upload_df_to_drive(df, file_name):
 
 # ===============================
 # DATABASE & API FUNCTIONS
+# (No changes in the functions below this point)
 # ===============================
 def enrich_people(payload):
     headers = {"Content-Type": "application/json", "Accept": "application/json", "token": CONTACTOUT_API_TOKEN}
@@ -119,17 +125,14 @@ def enrich_people(payload):
         resp = requests.post(API_BASE, headers=headers, json=payload)
         if resp.status_code != 200:
             st.error(f"ContactOut API Error (Status: {resp.status_code})")
-            try:
-                st.json(resp.json())
-            except ValueError:
-                st.text(resp.text)
+            try: st.json(resp.json())
+            except ValueError: st.text(resp.text)
         return resp.status_code, resp.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Network error contacting ContactOut API: {e}")
         return None, None
     except ValueError:
         return resp.status_code, {"error": "Received non-JSON response from API"}
-
 
 def extract_relevant_fields(response, original_payload={}):
     profile = response.get("profile", response)
@@ -180,7 +183,6 @@ def sync_cleaned_contacts_to_drive():
     conn = get_db_connection()
     if not conn: return
     try:
-        st.info("Syncing cleaned contacts list to Google Drive...")
         df = pd.read_sql("SELECT * FROM cleaned_contacts ORDER BY id DESC", conn)
         if not df.empty:
             upload_df_to_drive(df, "cleaned_contacts.csv")
@@ -205,7 +207,7 @@ def process_enrichment(payload):
         if new_contact_added:
             sync_cleaned_contacts_to_drive()
     except (Exception, psycopg2.DatabaseError) as error:
-        st.error(f"❌ An unexpected error occurred: {error}") # More generic error message
+        st.error(f"❌ An unexpected error occurred: {error}")
         conn.rollback()
     finally:
         if conn: conn.close()
