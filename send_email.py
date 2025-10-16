@@ -15,7 +15,7 @@ try:
     client = OpenAI(api_key=st.secrets["openai"]["api_key"])
 except Exception:
     # For local development
-    client = OpenAI(api_key="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")
+    client = OpenAI(api_key="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")
 
 # ===============================
 # HELPER FUNCTIONS
@@ -200,6 +200,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
