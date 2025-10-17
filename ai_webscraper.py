@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime
 import datetime as dt
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, OperationFailure
+from pymongo.errors import ConnectionFailure
 import os
 from dotenv import load_dotenv
 
@@ -20,7 +20,7 @@ SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 
-# **NEW:** Define collection names for raw scraped data and the final cleaned list
+# Define collection names for raw scraped data and the final cleaned list
 RAW_SCRAPED_COLLECTION = "scraped_contacts"
 CLEANED_COLLECTION_NAME = "cleaned_contacts"
 
@@ -40,48 +40,18 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-def google_search(query, num_results=5):
-    params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
-    search = GoogleSearch(params)
-    results = search.get_dict().get("organic_results", [])
-    return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
+# ... (google_search, find_contact_page, scrape_contact_page functions are the same)
 
-def find_contact_page(website_url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(website_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for a in soup.find_all("a", href=True):
-            href_text = a.get_text(strip=True).lower()
-            href_url = a["href"].lower()
-            if "contact" in href_url or "contact" in href_text:
-                return requests.compat.urljoin(website_url, a["href"])
-    except requests.exceptions.RequestException:
-        pass
-    return website_url
-
-def scrape_contact_page(contact_url):
-    emails, phones = [], []
-    if not contact_url:
-        return {"emails": [], "phones": []}
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(contact_url, headers=headers, timeout=10)
-        text = resp.text
-        emails = list(set(re.findall(EMAIL_REGEX, text)))
-        phones = list(set(re.findall(PHONE_REGEX, text)))
-    except requests.exceptions.RequestException:
-        pass
-    return {"emails": emails, "phones": phones}
-
-# **NEW:** Function to save raw data to its own collection
 def save_to_raw_scraped_log(db, data):
+    """Saves the raw, unprocessed data from the web scraper."""
     try:
         db[RAW_SCRAPED_COLLECTION].insert_one(data)
     except Exception as e:
         st.error(f"❌ Error saving to raw scrape log: {e}")
 
 def save_to_cleaned_mongo(db, dict_data):
+    """Saves the standardized data to the final cleaned collection, ensuring uniqueness."""
+    # **FIX:** The website URL is now the unique key, not LinkedIn.
     source_url = dict_data.get("source_url")
     if not source_url:
         st.warning(f"⚠️ Skipped saving '{dict_data.get('name', 'Unknown')}' to cleaned contacts: Source URL is missing.")
@@ -100,8 +70,8 @@ def save_to_cleaned_mongo(db, dict_data):
     except Exception as e:
         st.error(f"❌ Error during cleaned save operation: {e}")
 
-# **UPDATED:** This function now handles the two-step save process
 def process_and_save_results(results, query, db):
+    """Handles the two-step save process: first to raw log, then to cleaned collection."""
     rows_for_display = []
     
     for item in results:
@@ -120,10 +90,10 @@ def process_and_save_results(results, query, db):
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
         
-        # 2. Prepare standardized data and attempt to save to the cleaned collection
+        # 2. Prepare standardized data for the cleaned collection
         cleaned_data = {
             "name": item.get("title", ""),
-            "source_url": website_url,
+            "source_url": website_url, # The website is the unique source
             "emails": ", ".join(contact_info.get("emails", [])),
             "phones": ", ".join(contact_info.get("phones", [])),
             "domain": website_url.split('/')[2] if website_url else None,
@@ -132,7 +102,6 @@ def process_and_save_results(results, query, db):
         }
         save_to_cleaned_mongo(db, cleaned_data)
 
-        # Prepare a row for the UI table to show what was just scraped
         rows_for_display.append({
             "company_name": item.get("title", ""),
             "website_url": website_url,
@@ -141,7 +110,6 @@ def process_and_save_results(results, query, db):
         })
 
     return pd.DataFrame(rows_for_display)
-
 # ===============================
 # STREAMLIT UI
 # ===============================
