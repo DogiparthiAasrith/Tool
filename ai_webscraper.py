@@ -39,7 +39,8 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-# **FIX:** This function was likely missing from your file. It is now restored.
+# **FIX:** The definition for 'google_search' must exist before 'main' is called.
+# This is the function that was reported as missing.
 def google_search(query, num_results=5):
     """Performs a Google search using the SerpAPI and returns the results."""
     params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
@@ -134,7 +135,7 @@ def main():
     if st.button("Search & Scrape"):
         if not SERPAPI_API_KEY:
             st.error("❌ SERPAPI_API_KEY is not set!")
-            st.warning("Please add your SerpAPI key to your environment variables or Streamlit secrets to continue.")
+            st.warning("Please add your SerpAPI key to your Streamlit secrets to continue.")
             st.stop()
         if not query:
             st.warning("Please enter a search query!")
@@ -146,7 +147,9 @@ def main():
 
         try:
             with st.spinner("Searching Google and scraping websites..."):
+                # This line will now work because the function is defined above
                 results = google_search(query, num_results=10)
+                
                 progress_bar = st.progress(0, text="Scraping websites...")
                 for i, item in enumerate(results):
                     website = item.get("url")
