@@ -216,19 +216,26 @@ def main():
         with st.spinner("Generating drafts..."):
             for i, row in selected_rows.iterrows():
                 
-                # --- MODIFIED: Robust email selection logic ---
-                # This new logic correctly finds the first valid email from either work or personal fields.
-                work_emails_str = row.get('work_emails', '') or ""
-                personal_emails_str = row.get('personal_emails', '') or ""
+                # --- MODIFIED: New logic to prioritize work email ---
+                to_email = None
                 
-                # Combine, split by comma, and clean up
-                all_emails_list = [e.strip() for e in f"{work_emails_str},{personal_emails_str}".split(',') if e.strip()]
-
-                if not all_emails_list:
+                # First, try to get a work email
+                work_emails_str = row.get('work_emails', '') or ""
+                work_emails_list = [e.strip() for e in work_emails_str.split(',') if e.strip()]
+                if work_emails_list:
+                    to_email = work_emails_list[0]
+                
+                # If no work email was found, fall back to personal email
+                if not to_email:
+                    personal_emails_str = row.get('personal_emails', '') or ""
+                    personal_emails_list = [e.strip() for e in personal_emails_str.split(',') if e.strip()]
+                    if personal_emails_list:
+                        to_email = personal_emails_list[0]
+                
+                # If still no email, skip this contact
+                if not to_email:
                     st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
                     continue
-                
-                to_email = all_emails_list[0] # Use the first valid email
                 # --- END OF MODIFICATION ---
 
                 body = generate_personalized_email_body(row)
@@ -237,7 +244,6 @@ def main():
                     "subject": "Connecting from Morphius AI", "body": body,
                     "contact_details": row.to_dict()
                 })
-        # --- REMOVED: st.rerun() was removed to allow drafts to display immediately ---
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
