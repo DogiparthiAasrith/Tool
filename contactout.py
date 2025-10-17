@@ -69,18 +69,16 @@ def get_db_connection():
         return None, None
 
 def setup_database_indexes():
-    """Creates the correct unique index on the 'source_url' field."""
     client, db = get_db_connection()
     if not client: return
     try:
         db[CLEANED_COLLECTION_NAME].create_index("source_url", unique=True)
     except OperationFailure:
-        pass # Index already exists, which is fine.
+        pass
     finally:
         if client: client.close()
 
 def save_to_raw_log(db, data):
-    """Saves the raw, unprocessed data from ContactOut."""
     try:
         db[RAW_CONTACTOUT_COLLECTION].insert_one(data)
         st.success(f"✅ Saved '{data.get('name')}' to raw contacts log.")
@@ -88,7 +86,6 @@ def save_to_raw_log(db, data):
         st.error(f"❌ Error during raw save operation: {e}")
 
 def save_to_cleaned_mongo(db, dict_data):
-    """Saves the standardized data to the final cleaned collection, ensuring uniqueness."""
     source_url = dict_data.get("source_url")
     if not source_url:
         st.warning("⚠️ Skipped saving to cleaned contacts: Source URL (LinkedIn) is missing.")
@@ -136,10 +133,10 @@ def main():
     st.title("Contact Information Collector")
     setup_database_indexes()
 
-    # **FIX:** Corrected the typo from 'st-st.selectbox' to 'st.selectbox'
+    # **FIX:** Added "Company Domain" back to the list of options.
     choice = st.selectbox(
         "Choose an input type to enrich:",
-        ("LinkedIn URL", "Email", "Name + Company")
+        ("LinkedIn URL", "Email", "Name + Company", "Company Domain")
     )
     payload = {}
     include_fields = ["work_email", "personal_email", "phone"]
@@ -162,6 +159,13 @@ def main():
         if st.button("Enrich from Name + Company"):
             if name and company:
                 payload = {"full_name": name, "company": [company], "include": include_fields}
+                process_enrichment(payload)
+    # **FIX:** Added the logic block for the "Company Domain" option.
+    elif choice == 'Company Domain':
+        domain = st.text_input("Enter the company domain (e.g., apple.com):")
+        if st.button("Enrich from Company Domain"):
+            if domain:
+                payload = {"company_domain": domain, "include": include_fields}
                 process_enrichment(payload)
 
 if __name__ == '__main__':
