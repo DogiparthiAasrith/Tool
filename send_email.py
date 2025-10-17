@@ -193,11 +193,16 @@ def main():
     else:
         display_df = contacts_df.copy()
 
-    editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}"
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
 
-    # Disable mongo_id from being edited
+    # --- ADDED: "Select All" functionality ---
+    select_all = st.checkbox("Select All Contacts")
+    if select_all:
+        display_df['Select'] = True
+    # --- END OF ADDITION ---
+
+    editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}"
     disabled_cols = list(display_df.columns.drop("Select"))
 
     edited_df = st.data_editor(
@@ -210,9 +215,21 @@ def main():
         st.session_state.edited_emails = []
         with st.spinner("Generating drafts..."):
             for i, row in selected_rows.iterrows():
-                to_email = row.get('work_emails') or row.get('personal_emails')
-                if not to_email or pd.isna(to_email):
+                
+                # --- MODIFIED: Robust email selection logic ---
+                # This new logic correctly finds the first valid email from either work or personal fields.
+                work_emails_str = row.get('work_emails', '') or ""
+                personal_emails_str = row.get('personal_emails', '') or ""
+                
+                # Combine, split by comma, and clean up
+                all_emails_list = [e.strip() for e in f"{work_emails_str},{personal_emails_str}".split(',') if e.strip()]
+
+                if not all_emails_list:
+                    st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
                     continue
+                
+                to_email = all_emails_list[0] # Use the first valid email
+                # --- END OF MODIFICATION ---
 
                 body = generate_personalized_email_body(row)
                 st.session_state.edited_emails.append({
@@ -220,7 +237,7 @@ def main():
                     "subject": "Connecting from Morphius AI", "body": body,
                     "contact_details": row.to_dict()
                 })
-        st.rerun()
+        # --- REMOVED: st.rerun() was removed to allow drafts to display immediately ---
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
