@@ -1,5 +1,6 @@
 import streamlit as st
 from contactout import main as contactout_main
+from ai_web_scraper import main as web_scraper_main
 from send_email import main as send_email_main
 from email_preview import main as email_preview_main
 from reply import main as reply_main
@@ -146,7 +147,7 @@ with st.sidebar:
 
     page = st.radio(
         "📍 Navigate to:",
-        ("Collect Contacts", "Show Cleaned Data", "Generate & Edit Emails", "Email Preview", "Handle Replies", "Dashboard")
+        ("Collect Contacts", "AI Web Scraper", "Show Cleaned Data", "Generate & Edit Emails", "Email Preview", "Handle Replies", "Dashboard")
     )
 
     st.markdown("---")
@@ -163,6 +164,8 @@ st.markdown('<div class="main-header"><h1> Morphius AI — Email Automation</h1>
 
 if page == "Collect Contacts":
     contactout_main()
+elif page == "AI Web Scraper":
+    web_scraper_main()
 elif page == "Show Cleaned Data":
     clean_data_main()
 elif page == "Generate & Edit Emails":
@@ -179,4 +182,3 @@ elif page == "Dashboard":
 # ===============================
 
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
-
