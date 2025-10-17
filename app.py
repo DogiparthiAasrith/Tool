@@ -152,7 +152,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("""
         <div style="text-align:center; font-size:0.9rem; color:#ddd;">
-        © 2025 Morphius AI <br> Crafted with ❤ by Gowthami
+        © 2025 Morphius AI <br>
         </div>
     """, unsafe_allow_html=True)
 
@@ -179,3 +179,4 @@ elif page == "Dashboard":
 # ===============================
 
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
+
