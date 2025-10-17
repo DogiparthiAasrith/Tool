@@ -1,3 +1,5 @@
+--- START OF FILE reply.py ---
+
 import streamlit as st
 import imaplib
 import email
@@ -27,7 +29,8 @@ SMTP_SERVER = os.getenv("SMTP_SERVER")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 IMAP_SERVER = os.getenv("IMAP_SERVER")
 IMAP_PORT = int(os.getenv("IMAP_PORT", 993))
-CALENDLY_LINK = os.getenv("CALENDLY_LINK")
+# MODIFIED: Renamed variable for clarity
+SCHEDULING_LINK = os.getenv("SCHEDULING_LINK")
 OTHER_SERVICES_LINK = os.getenv("OTHER_SERVICES_LINK")
 
 # ===============================
@@ -119,7 +122,8 @@ def send_reply(db, to_email, original_subject, interest_level, mail_id):
     """Sends a reply based on the classified interest level."""
     if interest_level == "positive":
         subject = f"Re: {original_subject}"
-        body = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {CALENDLY_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
+        # MODIFIED: Using the new generic variable name
+        body = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {SCHEDULING_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
     elif interest_level in ["negative", "neutral"]:
         subject = f"Re: {original_subject}"
         body = f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services which you can explore here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
