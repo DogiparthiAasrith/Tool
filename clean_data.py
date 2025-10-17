@@ -39,24 +39,21 @@ def fetch_cleaned_contacts(db):
         if '_id' in df.columns:
             df = df.drop(columns=['_id'])
         
-        # Define a logical order for columns
+        # **FIX:** Define a logical order for columns to display unified data clearly
         desired_order = [
             "name", "emails", "phones", "source", 
             "source_url", "domain", "created_at"
         ]
         
-        # Get columns that exist in the dataframe, in the desired order
-        ordered_cols = [col for col in desired_order if col in df.columns]
+        existing_cols = [col for col in desired_order if col in df.columns]
         
-        # Add any other columns that might exist but are not in the desired_order list
-        for col in df.columns:
-            if col not in ordered_cols:
-                ordered_cols.append(col)
+        # Add any other columns that might not be in the desired list to the end
+        other_cols = [col for col in df.columns if col not in existing_cols]
         
-        return df[ordered_cols]
+        return df[existing_cols + other_cols]
         
     except Exception as error:
-        st.warning(f"⚠️ Could not fetch cleaned contacts. The collection might not exist yet. Error: {error}")
+        st.warning(f"⚠️ Could not fetch cleaned contacts. Collection might be empty. Error: {error}")
         return pd.DataFrame()
 
 
@@ -75,7 +72,7 @@ def main():
     Main function to display the cleaned data and provide a download option.
     """
     st.title("View and Download Cleaned Data")
-    st.markdown("This section displays the unique contacts collected from all sources. The list updates automatically as new, non-duplicate contacts are added.")
+    st.markdown("This section displays all unique contacts collected from ContactOut and the AI Web Scraper. The list updates automatically.")
 
     if st.button("🔄 Refresh Data"):
         st.rerun()
@@ -90,7 +87,7 @@ def main():
     if not cleaned_df.empty:
         csv_saved = save_df_to_csv(cleaned_df)
 
-        st.header(f"Unique Contacts ({len(cleaned_df)})")
+        st.header(f"Total Unique Contacts ({len(cleaned_df)})")
         st.dataframe(cleaned_df)
 
         if csv_saved:
@@ -102,7 +99,7 @@ def main():
                     mime="text/csv"
                 )
     else:
-        st.info("ℹ️ No unique contacts found in the database yet. Go to 'Collect Contacts' or 'AI Web Scraper' to add some!")
+        st.info("ℹ️ No unique contacts found yet. Go to 'Collect Contacts' or 'AI Web Scraper' to add some!")
 
 if __name__ == '__main__':
     main()
