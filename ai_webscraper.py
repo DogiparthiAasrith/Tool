@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime
 import datetime as dt
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import ConnectionFailure, OperationFailure
 import os
 from dotenv import load_dotenv
 
@@ -45,18 +45,6 @@ def google_search(query, num_results=5):
     results = search.get_dict().get("organic_results", [])
     return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
 
-def fetch_page_text(url):
-    """Fetches the text content of a given URL."""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            return " ".join(soup.stripped_strings)
-    except requests.exceptions.RequestException as e:
-        print(f"⚠ Error fetching {url}: {e}")
-    return ""
-
 def find_contact_page(website_url):
     """Finds a 'contact' page link from a website's homepage."""
     try:
@@ -70,11 +58,13 @@ def find_contact_page(website_url):
                 return requests.compat.urljoin(website_url, a["href"])
     except requests.exceptions.RequestException:
         return None
-    return None
+    return website_url # Return base url if no contact page is found
 
 def scrape_contact_page(contact_url):
     """Scrapes emails and phone numbers from a contact page."""
     emails, phones = [], []
+    if not contact_url:
+        return {"emails": [], "phones": []}
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(contact_url, headers=headers, timeout=10)
@@ -86,10 +76,11 @@ def scrape_contact_page(contact_url):
     return {"emails": emails, "phones": phones}
 
 def save_to_cleaned_mongo(db, dict_data):
-    """Saves a single contact record to the cleaned_contacts collection, avoiding duplicates."""
+    """Saves a single contact record to the cleaned_contacts collection, avoiding duplicates based on source_url."""
+    # **FIX:** Ensure source_url exists before saving
     source_url = dict_data.get("source_url")
     if not source_url:
-        st.warning("⚠️ Skipped saving to cleaned contacts: Source URL is missing.")
+        st.warning(f"⚠️ Skipped saving '{dict_data.get('name', 'Unknown')}' to cleaned contacts: Source URL is missing.")
         return
 
     try:
@@ -100,41 +91,46 @@ def save_to_cleaned_mongo(db, dict_data):
         )
         contact_name = dict_data.get("name") or "Unknown"
         if result.upserted_id:
-            st.success(f"✅ Added new unique contact '{contact_name}' to cleaned data.")
+            st.success(f"✅ Added new unique contact '{contact_name}' from Web Scraper.")
         else:
             st.info(f"ℹ️ Contact '{contact_name}' already exists in cleaned data.")
     except Exception as e:
-        st.error(f"❌ Error during cleaned save operation: {e}")
+        # Catch the specific duplicate key error on the off-chance it happens
+        if "E11000" in str(e):
+             st.warning(f"ℹ️ Contact '{dict_data.get('name', 'Unknown')}' already exists (duplicate source URL).")
+        else:
+            st.error(f"❌ Error during cleaned save operation: {e}")
 
 def save_and_process_results(results, query, db):
     """Processes scraped results, saves them to MongoDB, and returns a DataFrame for display."""
-    rows_for_csv = []
+    rows_for_display = []
     
     for item in results:
         contact_info = item.get("contact_info", {})
+        
+        # **FIX:** Prepare data for the unified 'cleaned_contacts' collection
         cleaned_data = {
             "name": item.get("title", ""),
-            "source_url": (item.get("url") or "").rstrip('/'),
+            "source_url": (item.get("url") or "").rstrip('/'), # This is the unique key
             "emails": ", ".join(contact_info.get("emails", [])),
             "phones": ", ".join(contact_info.get("phones", [])),
-            "domain": None,
-            "source": "Web Scraper",
+            "domain": (item.get("url") or "").split('/')[2] if item.get("url") else None,
+            "source": "Web Scraper", # **FIX:** Add the data source
             "created_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_cleaned_mongo(db, cleaned_data)
 
-        row_for_csv = {
+        # Prepare a row for the session's results table
+        row_for_display = {
             "query": query,
             "company_name": item.get("title", ""),
             "website_url": item.get("url", ""),
-            "description": item.get("snippet", ""),
             "emails": ", ".join(contact_info.get("emails", [])),
             "phones": ", ".join(contact_info.get("phones", [])),
-            "timestamp": dt.datetime.now()
         }
-        rows_for_csv.append(row_for_csv)
+        rows_for_display.append(row_for_display)
 
-    return pd.DataFrame(rows_for_csv)
+    return pd.DataFrame(rows_for_display)
 
 # ===============================
 # STREAMLIT UI
@@ -142,7 +138,7 @@ def save_and_process_results(results, query, db):
 def main():
     """Main function to run the Streamlit UI for the AI Web Scraper."""
     st.title("🕸 AI Web Scraper")
-    st.markdown("Enter a query (e.g., 'Manufacturing companies in California') to find websites, then scrape their contact pages for emails and phone numbers.")
+    st.markdown("Enter a query (e.g., 'Manufacturing companies in California') to find websites and scrape their contact information.")
     query = st.text_input("Enter your search query:")
 
     if st.button("Search & Scrape"):
@@ -155,20 +151,19 @@ def main():
             return
 
         try:
-            with st.spinner("Searching and scraping... This may take a moment."):
+            with st.spinner("Searching Google and scraping websites... This may take a moment."):
                 results = google_search(query, num_results=10)
                 
                 progress_bar = st.progress(0, text="Scraping websites...")
                 for i, item in enumerate(results):
                     website = item.get("url")
-                    if website:
-                        contact_page = find_contact_page(website) or website
-                        item["contact_info"] = scrape_contact_page(contact_page)
-                    progress_bar.progress((i + 1) / len(results), text=f"Scraping: {website}")
+                    contact_page = find_contact_page(website)
+                    item["contact_info"] = scrape_contact_page(contact_page)
+                    progress_bar.progress((i + 1) / len(results), text=f"Scraped: {website}")
 
             st.info("Saving results to the database...")
             df = save_and_process_results(results, query, db)
-            st.success("✅ Scraping and saving completed successfully!")
+            st.success("✅ Scraping and saving process completed!")
             st.dataframe(df)
             
             if not df.empty:
