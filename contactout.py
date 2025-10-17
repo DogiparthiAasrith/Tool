@@ -65,7 +65,7 @@ def extract_relevant_fields(response, original_payload={}):
 
     return {
         "name": profile.get("full_name"),
-        "source_url": linkedin_url,
+        "source_url": linkedin_url or "", # Ensure it's not None
         "emails": all_emails,
         "phones": ", ".join(profile.get("phone", [])),
         "domain": profile.get("company", {}).get("domain") if profile.get("company") else None,
@@ -84,11 +84,13 @@ def get_db_connection():
         return None, None
 
 def setup_database_indexes():
+    """Sets up the correct unique index on the 'source_url' field."""
     client, db = get_db_connection()
     if not client: return
     try:
+        # **FIX:** Create the unique index on 'source_url' to standardize uniqueness
         db.cleaned_contacts.create_index("source_url", unique=True)
-    except OperationFailure as e:
+    except OperationFailure:
         st.info(f"Database index on 'source_url' already exists.")
     finally:
         if client: client.close()
@@ -102,6 +104,8 @@ def save_to_mongo(db, collection_name, dict_data):
         st.error(f"❌ Error during raw save operation: {e}")
 
 def save_to_cleaned_mongo(db, dict_data):
+    """Saves to cleaned contacts, skipping if the source_url is missing."""
+    # **FIX:** Check for source_url before attempting to save to prevent duplicate null errors.
     source_url = dict_data.get("source_url")
     if not source_url:
         st.warning("⚠️ Skipped saving to cleaned contacts: Source URL (LinkedIn) is missing.")
