@@ -2,8 +2,10 @@ import streamlit as st
 import requests
 import pandas as pd
 import os
-import psycopg2
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, OperationFailure
 from dotenv import load_dotenv
+import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -12,7 +14,8 @@ load_dotenv()
 # CONFIGURATION
 # ===============================
 CONTACTOUT_API_TOKEN = os.getenv("CONTACTOUT_API_TOKEN")
-POSTGRES_URL = os.getenv("POSTGRES_URL")
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 API_BASE = "https://api.contactout.com/v1/people/enrich"
 
 
@@ -30,24 +33,19 @@ def enrich_people(payload):
     try:
         resp = requests.post(API_BASE, headers=headers, json=payload)
 
-        # --- IMPROVED ERROR HANDLING ---
-        # Check if the request was successful (e.g., status code 200)
         if resp.status_code != 200:
             st.error(f"ContactOut API returned an error (Status Code: {resp.status_code})")
-            # Try to print the detailed error message from the API
             try:
                 st.json(resp.json())
             except ValueError:
-                st.text(resp.text) # If the error isn't in JSON format, show the raw text
+                st.text(resp.text)
 
         return resp.status_code, resp.json()
 
     except requests.exceptions.RequestException as e:
-        # This catches network errors (e.g., can't connect to the server)
         st.error(f"A network error occurred while contacting the ContactOut API: {e}")
         return None, None
     except ValueError:
-        # This catches errors if the response from the API is not valid JSON
         return resp.status_code, resp.text
 
 
@@ -67,67 +65,60 @@ def extract_relevant_fields(response, original_payload={}):
         "work_emails": ", ".join(profile.get("work_email", [])),
         "personal_emails": ", ".join(profile.get("personal_email", [])),
         "phones": ", ".join(profile.get("phone", [])),
-        "domain": profile.get("company", {}).get("domain") if profile.get("company") else None
+        "domain": profile.get("company", {}).get("domain") if profile.get("company") else None,
+        "created_at": datetime.datetime.now(datetime.timezone.utc)
     }
 
 def get_db_connection():
     try:
-        return psycopg2.connect(POSTGRES_URL)
-    except psycopg2.OperationalError as e:
+        client = MongoClient(MONGO_URI)
+        # The ismaster command is cheap and does not require auth.
+        client.admin.command('ismaster')
+        db = client[MONGO_DB_NAME]
+        return client, db
+    except ConnectionFailure as e:
         st.error(f"❌ **Database Connection Error:** {e}")
-        return None
+        return None, None
 
-def setup_database_tables():
-    conn = get_db_connection()
-    if not conn: return
+def setup_database_indexes():
+    client, db = get_db_connection()
+    if not client: return
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS contacts (
-                    id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT,
-                    work_emails TEXT, personal_emails TEXT, phones TEXT,
-                    domain TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS cleaned_contacts (
-                    id SERIAL PRIMARY KEY, name TEXT, linkedin_url TEXT UNIQUE NOT NULL,
-                    work_emails TEXT, personal_emails TEXT, phones TEXT,
-                    domain TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            conn.commit()
-    except (Exception, psycopg2.DatabaseError) as error:
-        st.error(f"❌ Could not set up database tables: {error}")
+        # Create a unique index on linkedin_url to prevent duplicates
+        db.cleaned_contacts.create_index("linkedin_url", unique=True)
+    except OperationFailure as e:
+        st.error(f"❌ Could not set up database indexes: {e}")
     finally:
-        if conn: conn.close()
+        if client: client.close()
 
-def save_to_postgres(conn, dict_data):
-    sql = "INSERT INTO contacts (name, linkedin_url, work_emails, personal_emails, phones, domain) VALUES (%s, %s, %s, %s, %s, %s);"
-    data_tuple = (
-        dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"),
-        dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain")
-    )
-    with conn.cursor() as cur:
-        cur.execute(sql, data_tuple)
-    contact_name = dict_data.get("name") or "Unknown Name"
-    st.success(f"✅ Saved '{contact_name}' to raw contacts log.")
+def save_to_mongo(db, collection_name, dict_data):
+    try:
+        db[collection_name].insert_one(dict_data)
+        contact_name = dict_data.get("name") or "Unknown Name"
+        st.success(f"✅ Saved '{contact_name}' to raw contacts log.")
+    except Exception as e:
+        st.error(f"❌ Error during raw save operation: {e}")
 
-def save_to_cleaned_postgres(conn, dict_data):
-    if not dict_data.get("linkedin_url"):
+def save_to_cleaned_mongo(db, dict_data):
+    linkedin_url = dict_data.get("linkedin_url")
+    if not linkedin_url:
         st.warning("⚠️ Skipped saving to cleaned contacts: LinkedIn URL is missing.")
         return
-    sql = "INSERT INTO cleaned_contacts (name, linkedin_url, work_emails, personal_emails, phones, domain) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (linkedin_url) DO NOTHING;"
-    data_tuple = (
-        dict_data.get("name"), dict_data.get("linkedin_url"), dict_data.get("work_emails"),
-        dict_data.get("personal_emails"), dict_data.get("phones"), dict_data.get("domain")
-    )
-    with conn.cursor() as cur:
-        cur.execute(sql, data_tuple)
-        if cur.rowcount > 0:
-            st.success(f"✅ Added new unique contact '{dict_data.get('name')}' to cleaned data.")
+
+    try:
+        # This will insert the document only if no document with the same linkedin_url exists.
+        result = db.cleaned_contacts.update_one(
+            {'linkedin_url': linkedin_url},
+            {'$setOnInsert': dict_data},
+            upsert=True
+        )
+        contact_name = dict_data.get("name") or "Unknown Name"
+        if result.upserted_id:
+            st.success(f"✅ Added new unique contact '{contact_name}' to cleaned data.")
         else:
-            st.info(f"ℹ️ Contact '{dict_data.get('name')}' already exists in cleaned data.")
+            st.info(f"ℹ️ Contact '{contact_name}' already exists in cleaned data.")
+    except Exception as e:
+        st.error(f"❌ Error during cleaned save operation: {e}")
 
 def process_enrichment(payload):
     if not payload:
@@ -136,7 +127,6 @@ def process_enrichment(payload):
 
     status, response = enrich_people(payload)
 
-    # Handle case where the network request failed completely
     if status is None:
         return
 
@@ -147,23 +137,21 @@ def process_enrichment(payload):
         st.success("✅ Enriched Data:")
         st.json(enriched_data)
 
-        conn = get_db_connection()
-        if not conn: return
+        client, db = get_db_connection()
+        if not client: return
         try:
-            save_to_postgres(conn, enriched_data)
-            save_to_cleaned_postgres(conn, enriched_data)
-            conn.commit()
-        except (Exception, psycopg2.DatabaseError) as error:
+            save_to_mongo(db, 'contacts', enriched_data)
+            save_to_cleaned_mongo(db, enriched_data)
+        except Exception as error:
             st.error(f"❌ Error during database operation: {error}")
-            conn.rollback()
         finally:
-            if conn: conn.close()
+            if client: client.close()
     elif status == 404:
         st.warning("🟡 Contact Not Found.")
 
 def main():
     st.title("Contact Information Collector")
-    setup_database_tables()
+    setup_database_indexes()
 
     choice = st.selectbox(
         "Choose an input type to enrich:",
