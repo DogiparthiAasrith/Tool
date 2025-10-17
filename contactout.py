@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import pandas as pd
 import os
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -49,7 +48,7 @@ def extract_relevant_fields(response, original_payload={}):
 
     return {
         "name": profile.get("full_name"),
-        "source_url": (linkedin_url or "").rstrip('/'),
+        "source_url": (linkedin_url or "").rstrip('/'), # This is the unique key
         "emails": ", ".join(profile.get("work_email", []) + profile.get("personal_email", [])),
         "phones": ", ".join(profile.get("phone", [])),
         "domain": profile.get("company", {}).get("domain") if profile.get("company") else None,
