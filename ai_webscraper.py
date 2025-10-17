@@ -39,8 +39,8 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-# **FIX:** The definition for 'google_search' must exist before 'main' is called.
-# This is the function that was reported as missing.
+# **FIX:** This function definition was missing. It is now restored.
+# The NameError occurs because this block of code was not present in your script.
 def google_search(query, num_results=5):
     """Performs a Google search using the SerpAPI and returns the results."""
     params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
@@ -147,7 +147,7 @@ def main():
 
         try:
             with st.spinner("Searching Google and scraping websites..."):
-                # This line will now work because the function is defined above
+                # This call will now work because the function is defined above
                 results = google_search(query, num_results=10)
                 
                 progress_bar = st.progress(0, text="Scraping websites...")
