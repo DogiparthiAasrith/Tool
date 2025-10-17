@@ -59,20 +59,23 @@ def extract_relevant_fields(response, original_payload={}):
     if isinstance(linkedin_url, str):
         linkedin_url = linkedin_url.rstrip('/')
 
+    work_emails = profile.get("work_email", [])
+    personal_emails = profile.get("personal_email", [])
+    all_emails = ", ".join(work_emails + personal_emails)
+
     return {
         "name": profile.get("full_name"),
-        "linkedin_url": linkedin_url,
-        "work_emails": ", ".join(profile.get("work_email", [])),
-        "personal_emails": ", ".join(profile.get("personal_email", [])),
+        "source_url": linkedin_url,
+        "emails": all_emails,
         "phones": ", ".join(profile.get("phone", [])),
         "domain": profile.get("company", {}).get("domain") if profile.get("company") else None,
+        "source": "ContactOut",
         "created_at": datetime.datetime.now(datetime.timezone.utc)
     }
 
 def get_db_connection():
     try:
         client = MongoClient(MONGO_URI)
-        # The ismaster command is cheap and does not require auth.
         client.admin.command('ismaster')
         db = client[MONGO_DB_NAME]
         return client, db
@@ -84,10 +87,9 @@ def setup_database_indexes():
     client, db = get_db_connection()
     if not client: return
     try:
-        # Create a unique index on linkedin_url to prevent duplicates
-        db.cleaned_contacts.create_index("linkedin_url", unique=True)
+        db.cleaned_contacts.create_index("source_url", unique=True)
     except OperationFailure as e:
-        st.error(f"❌ Could not set up database indexes: {e}")
+        st.info(f"Database index on 'source_url' already exists.")
     finally:
         if client: client.close()
 
@@ -100,15 +102,14 @@ def save_to_mongo(db, collection_name, dict_data):
         st.error(f"❌ Error during raw save operation: {e}")
 
 def save_to_cleaned_mongo(db, dict_data):
-    linkedin_url = dict_data.get("linkedin_url")
-    if not linkedin_url:
-        st.warning("⚠️ Skipped saving to cleaned contacts: LinkedIn URL is missing.")
+    source_url = dict_data.get("source_url")
+    if not source_url:
+        st.warning("⚠️ Skipped saving to cleaned contacts: Source URL (LinkedIn) is missing.")
         return
 
     try:
-        # This will insert the document only if no document with the same linkedin_url exists.
         result = db.cleaned_contacts.update_one(
-            {'linkedin_url': linkedin_url},
+            {'source_url': source_url},
             {'$setOnInsert': dict_data},
             upsert=True
         )
