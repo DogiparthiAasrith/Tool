@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 import os
 from dotenv import load_dotenv
 
@@ -10,29 +11,38 @@ load_dotenv()
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = os.getenv("POSTGRES_URL")
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 CLEANED_CSV_PATH = "cleaned_contacts.csv"
-CLEANED_TABLE_NAME = "cleaned_contacts"
+CLEANED_COLLECTION_NAME = "cleaned_contacts"
 
 # ===============================
 # DATABASE & DATA FUNCTIONS
 # ===============================
 def get_db_connection():
-    """Establishes and returns a connection to the PostgreSQL database."""
+    """Establishes and returns a connection to the MongoDB database."""
     try:
-        return psycopg2.connect(POSTGRES_URL)
-    except psycopg2.OperationalError as e:
-        st.error(f"❌ **Database Connection Error:** Could not connect to PostgreSQL. Please ensure the database is running and the connection URL is correct.")
+        client = MongoClient(MONGO_URI)
+        client.admin.command('ismaster')
+        db = client[MONGO_DB_NAME]
+        return client, db
+    except ConnectionFailure as e:
+        st.error(f"❌ **Database Connection Error:** Could not connect to MongoDB.")
         st.error(e)
-        return None
+        return None, None
 
-def fetch_cleaned_contacts(conn):
-    """Fetches all records directly from the 'cleaned_contacts' table."""
+def fetch_cleaned_contacts(db):
+    """Fetches all records directly from the 'cleaned_contacts' collection."""
     try:
-        df = pd.read_sql(f"SELECT * FROM {CLEANED_TABLE_NAME} ORDER BY id DESC", conn)
+        # Find all documents and sort by the auto-generated _id for latest entries first
+        cursor = db[CLEANED_COLLECTION_NAME].find().sort('_id', -1)
+        df = pd.DataFrame(list(cursor))
+        # MongoDB adds an '_id' column, which you might want to remove for display
+        if '_id' in df.columns:
+            df = df.drop(columns=['_id'])
         return df
-    except (Exception, psycopg2.DatabaseError) as error:
-        st.warning(f"⚠️ Could not fetch cleaned contacts. The table might not exist yet. Error: {error}")
+    except Exception as error:
+        st.warning(f"⚠️ Could not fetch cleaned contacts. The collection might not exist yet. Error: {error}")
         return pd.DataFrame()
 
 def save_df_to_csv(df):
@@ -55,12 +65,12 @@ def main():
     if st.button("🔄 Refresh Data"):
         st.rerun()
 
-    conn = get_db_connection()
-    if not conn:
+    client, db = get_db_connection()
+    if not client:
         return
 
-    cleaned_df = fetch_cleaned_contacts(conn)
-    conn.close()
+    cleaned_df = fetch_cleaned_contacts(db)
+    client.close()
 
     if not cleaned_df.empty:
         csv_saved = save_df_to_csv(cleaned_df)
