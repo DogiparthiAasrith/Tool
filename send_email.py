@@ -196,11 +196,9 @@ def main():
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
 
-    # --- ADDED: "Select All" functionality ---
     select_all = st.checkbox("Select All Contacts")
     if select_all:
         display_df['Select'] = True
-    # --- END OF ADDITION ---
 
     editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}"
     disabled_cols = list(display_df.columns.drop("Select"))
@@ -216,27 +214,26 @@ def main():
         with st.spinner("Generating drafts..."):
             for i, row in selected_rows.iterrows():
                 
-                # --- MODIFIED: New logic to prioritize work email ---
+                # --- CORRECTED & ROBUST email selection logic ---
                 to_email = None
                 
-                # First, try to get a work email
-                work_emails_str = row.get('work_emails', '') or ""
-                work_emails_list = [e.strip() for e in work_emails_str.split(',') if e.strip()]
-                if work_emails_list:
-                    to_email = work_emails_list[0]
-                
-                # If no work email was found, fall back to personal email
+                # Safely get the work email value
+                work_email_val = row.get('work_emails')
+                # Check if it's a valid, non-empty string
+                if isinstance(work_email_val, str) and work_email_val.strip():
+                    to_email = work_email_val.split(',')[0].strip() # Take the first email if multiple exist
+
+                # If no valid work email was found, try the personal email
                 if not to_email:
-                    personal_emails_str = row.get('personal_emails', '') or ""
-                    personal_emails_list = [e.strip() for e in personal_emails_str.split(',') if e.strip()]
-                    if personal_emails_list:
-                        to_email = personal_emails_list[0]
-                
-                # If still no email, skip this contact
+                    personal_email_val = row.get('personal_emails')
+                    if isinstance(personal_email_val, str) and personal_email_val.strip():
+                        to_email = personal_email_val.split(',')[0].strip()
+
+                # If still no email after checking both, skip this contact and warn the user
                 if not to_email:
                     st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
                     continue
-                # --- END OF MODIFICATION ---
+                # --- END OF CORRECTION ---
 
                 body = generate_personalized_email_body(row)
                 st.session_state.edited_emails.append({
