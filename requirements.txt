@@ -1,7 +1,10 @@
-streamlit
-pandas
-openai
-plotly
-python-dotenv
-pymongo
+beautifulsoup4
 dnspython
+google-search-results
+openai
+pandas
+plotly
+pymongo
+python-dotenv
+requests
+streamlit
