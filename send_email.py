@@ -220,8 +220,7 @@ def main():
                     "subject": "Connecting from Morphius AI", "body": body,
                     "contact_details": row.to_dict()
                 })
-        # REMOVED: st.rerun() was causing the drafts not to display.
-        # The script will now continue and display the drafts below.
+        st.rerun()
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
