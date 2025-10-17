@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ===============================
-# CONFIGURATION & CONSTANTS
+# CONFIGURATION
 # ===============================
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
@@ -27,7 +27,7 @@ EMAIL_REGEX = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
 PHONE_REGEX = r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
 
 # ===============================
-# DATABASE & HELPER FUNCTIONS
+# FUNCTIONS
 # ===============================
 def get_db_connection():
     try:
@@ -47,7 +47,7 @@ def google_search(query, num_results=5):
 
 def find_contact_page(website_url):
     try:
-        headers = {"User-Agent": "Mozilla/V/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(website_url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
         for a in soup.find_all("a", href=True):
@@ -109,7 +109,7 @@ def process_and_save_results(results, query, db):
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
         cleaned_data = {
-            "name": item.get("title", ""), "source_url": website_url,
+            "name": item.get("title", ""), "source_url": website_url, # This is the unique key
             "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
             "domain": website_url.split('/')[2] if website_url else None, "source": "Web Scraper",
             "created_at": dt.datetime.now(dt.timezone.utc)
