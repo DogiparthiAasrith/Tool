@@ -8,3 +8,4 @@ pymongo
 python-dotenv
 requests
 streamlit
+google_search
