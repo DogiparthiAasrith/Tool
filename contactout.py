@@ -71,10 +71,9 @@ def setup_database_indexes():
     client, db = get_db_connection()
     if not client: return
     try:
-        # This creates the new, correct index for ensuring uniqueness.
         db[CLEANED_COLLECTION_NAME].create_index("source_url", unique=True)
     except OperationFailure:
-        pass  # Index already exists, which is fine.
+        pass
     finally:
         if client: client.close()
 
@@ -88,7 +87,7 @@ def save_to_raw_log(db, data):
 def save_to_cleaned_mongo(db, dict_data):
     source_url = dict_data.get("source_url")
     if not source_url:
-        st.warning("⚠️ Skipped saving to cleaned contacts: Source URL (LinkedIn) is missing.")
+        st.warning("⚠️ Skipped saving to cleaned contacts: Source URL is missing.")
         return
 
     try:
