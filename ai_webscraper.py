@@ -1,12 +1,13 @@
 import streamlit as st
-from serpapi import GoogleSearch as SerpApiSearch 
+from serpapi import GoogleSearch
 import requests
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
+from datetime import datetime
 import datetime as dt
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import ConnectionFailure, OperationFailure
 import os
 from dotenv import load_dotenv
 
@@ -38,14 +39,18 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-# **FIX:** Function is defined here in the global scope
-def perform_google_search(query, num_results=5):
-    """Performs a Google search using the SerpAPI."""
+# **FIX:** Definition of google_search, which was missing
+def google_search(query, num_results=5):
+    if not SERPAPI_API_KEY:
+        return [] # Return empty list if API key is missing
     params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
-    # Use the renamed class
-    search = SerpApiSearch(params) 
-    results = search.get_dict().get("organic_results", [])
-    return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
+    try:
+        search = GoogleSearch(params)
+        results = search.get_dict().get("organic_results", [])
+        return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
+    except Exception as e:
+        st.error(f"Error during Google search: {e}")
+        return []
 
 def find_contact_page(website_url):
     try:
@@ -65,22 +70,19 @@ def scrape_contact_page(contact_url):
     emails, phones = [], []
     if not contact_url: return {"emails": [], "phones": []}
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        resp = requests.get(contact_url, headers=headers, timeout=15)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(contact_url, headers=headers, timeout=10)
         text = resp.text
         emails = list(set(re.findall(EMAIL_REGEX, text)))
         phones = list(set(re.findall(PHONE_REGEX, text)))
-    except Exception:
-        pass
+    except requests.exceptions.RequestException: pass
     return {"emails": emails, "phones": phones}
-
 
 def save_to_raw_scraped_log(db, data):
     try:
         db[RAW_SCRAPED_COLLECTION].insert_one(data)
     except Exception as e:
         st.error(f"❌ Error saving to raw scrape log: {e}")
-
 
 def save_to_cleaned_mongo(db, dict_data):
     source_url = dict_data.get("source_url")
@@ -96,53 +98,43 @@ def save_to_cleaned_mongo(db, dict_data):
     except Exception as e:
         st.error(f"❌ Error during cleaned save operation: {e}")
 
-
 def process_and_save_results(results, query, db):
     rows_for_display = []
     for item in results:
         contact_info = item.get("contact_info", {})
         website_url = (item.get("url") or "").rstrip('/')
-        
-        # 1. Raw Log
         raw_scrape_data = {
             "query": query, "company_name": item.get("title", ""), "website_url": website_url,
             "snippet": item.get("snippet", ""), "scraped_emails": contact_info.get("emails", []),
             "scraped_phones": contact_info.get("phones", []), "scraped_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
-        
-        # 2. Cleaned Data
         cleaned_data = {
             "name": item.get("title", ""), "source_url": website_url,
             "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
-            "domain": website_url.split('/')[2] if website_url and len(website_url.split('/')) > 2 else None,
-            "source": "Web Scraper",
+            "domain": website_url.split('/')[2] if website_url else None, "source": "Web Scraper",
             "created_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_cleaned_mongo(db, cleaned_data)
-
         rows_for_display.append({
             "company_name": item.get("title", ""), "website_url": website_url,
             "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
         })
     return pd.DataFrame(rows_for_display)
 
-
 # ===============================
 # STREAMLIT UI
 # ===============================
 def main():
     st.title("🕸 AI Web Scraper")
-    st.markdown("Enter a query to find websites and scrape their contact information.")
-    query = st.text_input("Enter your search query (e.g., 'Software companies in Bangalore'):")
+    st.markdown("Enter a query to find websites and scrape their contact information. Results are saved to a raw log, and unique contacts are added to the cleaned data list.")
+    query = st.text_input("Enter your search query (e.g., 'Hospitals in Hyderabad'):")
 
     if st.button("Search & Scrape"):
-        
-        # Check for API key
         if not SERPAPI_API_KEY:
             st.error("❌ SERPAPI_API_KEY is not set!")
-            st.warning("Please configure your .env file or Streamlit Secrets.")
-            st.stop() 
+            st.warning("Please add your SerpAPI key to your environment variables or Streamlit secrets to continue.")
+            st.stop()
 
         if not query:
             st.warning("Please enter a search query!")
@@ -154,15 +146,12 @@ def main():
 
         try:
             with st.spinner("Searching Google and scraping websites..."):
-                # **FIX:** Calling the correctly defined function
-                results = perform_google_search(query, num_results=10)
-                
+                results = google_search(query, num_results=10)
                 progress_bar = st.progress(0, text="Scraping websites...")
                 for i, item in enumerate(results):
                     website = item.get("url")
-                    if website:
-                        contact_page = find_contact_page(website)
-                        item["contact_info"] = scrape_contact_page(contact_page)
+                    contact_page = find_contact_page(website)
+                    item["contact_info"] = scrape_contact_page(contact_page)
                     progress_bar.progress((i + 1) / len(results), text=f"Scraped: {website}")
 
             st.info("Saving results to the database...")
@@ -172,6 +161,12 @@ def main():
             st.subheader("Scraped Data from this Session")
             st.dataframe(df)
             
+            if not df.empty:
+                st.download_button(
+                    "Download Session Data (CSV)", 
+                    df.to_csv(index=False).encode("utf-8"), 
+                    file_name=f"scraped_{query.replace(' ','_')}.csv"
+                )
         finally:
             if client: client.close()
 
