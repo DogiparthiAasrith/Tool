@@ -18,7 +18,7 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 API_BASE = "https://api.contactout.com/v1/people/enrich"
 
 # Define collection names for raw and cleaned data
-RAW_CONTACTOUT_COLLECTION = "contacts" 
+RAW_CONTACTOUT_COLLECTION = "contacts"
 CLEANED_COLLECTION_NAME = "cleaned_contacts"
 
 # ===============================
@@ -48,7 +48,6 @@ def extract_relevant_fields(response, original_payload={}):
     if not linkedin_url and "linkedin_url" in original_payload:
         linkedin_url = original_payload["linkedin_url"]
 
-    # **FIX:** Standardize the unique key to 'source_url'
     return {
         "name": profile.get("full_name"),
         "source_url": (linkedin_url or "").rstrip('/'),
@@ -74,7 +73,6 @@ def setup_database_indexes():
     client, db = get_db_connection()
     if not client: return
     try:
-        # This will create the new, correct index if it doesn't exist
         db[CLEANED_COLLECTION_NAME].create_index("source_url", unique=True)
     except OperationFailure:
         pass # Index already exists, which is fine.
@@ -127,9 +125,7 @@ def process_enrichment(payload):
     client, db = get_db_connection()
     if not client: return
     try:
-        # 1. Save to the raw log
         save_to_raw_log(db, enriched_data)
-        # 2. Save to the cleaned, unique collection
         save_to_cleaned_mongo(db, enriched_data)
     except Exception as error:
         st.error(f"❌ Error during database operation: {error}")
@@ -140,7 +136,8 @@ def main():
     st.title("Contact Information Collector")
     setup_database_indexes()
 
-    choice = st-st.selectbox(
+    # **FIX:** Corrected the typo from 'st-st.selectbox' to 'st.selectbox'
+    choice = st.selectbox(
         "Choose an input type to enrich:",
         ("LinkedIn URL", "Email", "Name + Company")
     )
@@ -153,7 +150,19 @@ def main():
             if linkedin_url:
                 payload = {"linkedin_url": linkedin_url, "include": include_fields}
                 process_enrichment(payload)
-    # ... (rest of main function is the same)
+    elif choice == 'Email':
+        email = st.text_input("Enter the email address:")
+        if st.button("Enrich from Email"):
+            if email:
+                payload = {"email": email, "include": include_fields}
+                process_enrichment(payload)
+    elif choice == 'Name + Company':
+        name = st.text_input("Enter the full name:")
+        company = st.text_input("Enter the company name:")
+        if st.button("Enrich from Name + Company"):
+            if name and company:
+                payload = {"full_name": name, "company": [company], "include": include_fields}
+                process_enrichment(payload)
 
 if __name__ == '__main__':
     main()
