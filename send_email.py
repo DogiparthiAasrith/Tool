@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 from io import StringIO
 from openai import OpenAI
 import os
@@ -12,7 +13,8 @@ load_dotenv()
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = os.getenv("POSTGRES_URL")
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ===============================
@@ -20,16 +22,24 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ===============================
 def get_db_connection():
     try:
-        return psycopg2.connect(POSTGRES_URL)
-    except psycopg2.OperationalError as e:
+        client = MongoClient(MONGO_URI)
+        client.admin.command('ismaster')
+        db = client[MONGO_DB_NAME]
+        return client, db
+    except ConnectionFailure as e:
         st.error(f"❌ Database Connection Error: {e}")
-        return None
+        return None, None
 
-def fetch_cleaned_contacts(conn):
+def fetch_cleaned_contacts(db):
     try:
-        return pd.read_sql("SELECT * FROM cleaned_contacts ORDER BY id DESC", conn)
-    except (Exception, psycopg2.DatabaseError):
-        st.warning("⚠ Could not fetch contacts. The 'cleaned_contacts' table might not exist yet.")
+        cursor = db.cleaned_contacts.find().sort('_id', -1)
+        df = pd.DataFrame(list(cursor))
+        # Keep the original mongo ID for potential reference, but don't show it
+        if '_id' in df.columns:
+            df.rename(columns={'_id': 'mongo_id'}, inplace=True)
+        return df
+    except Exception as e:
+        st.warning(f"⚠ Could not fetch contacts. The 'cleaned_contacts' collection might not exist yet. Error: {e}")
         return pd.DataFrame()
 
 # --- CALLBACKS FOR STATE MANAGEMENT ---
@@ -139,8 +149,8 @@ def main():
     if 'filter_domain' not in st.session_state:
         st.session_state.filter_domain = None
 
-    conn = get_db_connection()
-    if not conn:
+    client, db = get_db_connection()
+    if not client:
         return
 
     st.header("Step 1: Find Contacts with AI")
@@ -170,8 +180,8 @@ def main():
 
     st.header("Step 2: Select Contacts & Generate Drafts")
     
-    contacts_df = fetch_cleaned_contacts(conn)
-    conn.close()
+    contacts_df = fetch_cleaned_contacts(db)
+    client.close()
 
     if contacts_df.empty:
         st.info("No cleaned contacts found. Go to 'Collect Contacts' to add some.")
@@ -187,8 +197,11 @@ def main():
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
 
+    # Disable mongo_id from being edited
+    disabled_cols = list(display_df.columns.drop("Select"))
+
     edited_df = st.data_editor(
-        display_df, hide_index=True, disabled=display_df.columns.drop("Select"), key=editor_key
+        display_df, hide_index=True, disabled=disabled_cols, key=editor_key
     )
     
     selected_rows = edited_df[edited_df['Select']]
@@ -196,14 +209,14 @@ def main():
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
         st.session_state.edited_emails = []
         with st.spinner("Generating drafts..."):
-            for _, row in selected_rows.iterrows():
+            for i, row in selected_rows.iterrows():
                 to_email = row.get('work_emails') or row.get('personal_emails')
                 if not to_email or pd.isna(to_email):
                     continue
 
                 body = generate_personalized_email_body(row)
                 st.session_state.edited_emails.append({
-                    "id": row['id'], "name": row['name'], "to_email": to_email,
+                    "id": i, "name": row['name'], "to_email": to_email,
                     "subject": "Connecting from Morphius AI", "body": body,
                     "contact_details": row.to_dict()
                 })
@@ -216,7 +229,6 @@ def main():
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
                 
-                # --- FIX: Using on_change for reliable updates ---
                 st.text_input(
                     "Subject",
                     value=email_draft['subject'],
