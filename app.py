@@ -1,6 +1,6 @@
 import streamlit as st
 from contactout import main as contactout_main
-from ai_webscraper import main as webscraper_main
+from ai_webscraper import main as web_scraper_main 
 from send_email import main as send_email_main
 from email_preview import main as email_preview_main
 from reply import main as reply_main
@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Morphius AI - Email Automator",
     page_icon="📧",
     layout="wide",
-    initial_sidebar_state="collapsed"  # auto-collapse sidebar on mobile
+    initial_sidebar_state="collapsed"
 )
 
 # ===============================
@@ -111,7 +111,7 @@ st.markdown("""
         border-radius: 50%;       
         box-shadow: 0px 3px 8px rgba(0,0,0,0.2); 
         transition: transform 0.2s ease-in-out;
-        width: 80px;             /* smaller desktop size */
+        width: 80px;            
         max-width: 40vw;          
         margin-bottom: 1rem;
     }
@@ -129,7 +129,7 @@ st.markdown("""
             padding: 6px 10px;
         }
         .sidebar .stImage > img {
-            width: 60px;    /* smaller mobile size */
+            width: 60px;   
             max-width: 30vw;
         }
     }
@@ -140,8 +140,7 @@ st.markdown("""
 # SIDEBAR WITH LOGO & NAVIGATION
 # ===============================
 with st.sidebar:
-    # Display local logo using st.image
-    st.image("Morphius_AI_logo.png")  # place your logo in project folder
+    st.image("Morphius_AI_logo.png") 
     st.markdown("### ⚙ *Morphius AI Email Automator*")
     st.markdown("---")
 
@@ -182,5 +181,3 @@ elif page == "Dashboard":
 # ===============================
 
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
-
-
