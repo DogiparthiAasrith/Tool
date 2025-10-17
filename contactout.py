@@ -17,7 +17,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 API_BASE = "https://api.contactout.com/v1/people/enrich"
 
-# Define collection names for raw and cleaned data
 RAW_CONTACTOUT_COLLECTION = "contacts"
 CLEANED_COLLECTION_NAME = "cleaned_contacts"
 
@@ -69,12 +68,14 @@ def get_db_connection():
         return None, None
 
 def setup_database_indexes():
+    """Creates the correct unique index on the 'source_url' field."""
     client, db = get_db_connection()
     if not client: return
     try:
+        # This creates the new, correct index for ensuring uniqueness.
         db[CLEANED_COLLECTION_NAME].create_index("source_url", unique=True)
     except OperationFailure:
-        pass
+        pass  # Index already exists, which is fine.
     finally:
         if client: client.close()
 
@@ -133,7 +134,6 @@ def main():
     st.title("Contact Information Collector")
     setup_database_indexes()
 
-    # **FIX:** Added "Company Domain" back to the list of options.
     choice = st.selectbox(
         "Choose an input type to enrich:",
         ("LinkedIn URL", "Email", "Name + Company", "Company Domain")
@@ -160,7 +160,6 @@ def main():
             if name and company:
                 payload = {"full_name": name, "company": [company], "include": include_fields}
                 process_enrichment(payload)
-    # **FIX:** Added the logic block for the "Company Domain" option.
     elif choice == 'Company Domain':
         domain = st.text_input("Enter the company domain (e.g., apple.com):")
         if st.button("Enrich from Company Domain"):
