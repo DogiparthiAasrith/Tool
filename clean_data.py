@@ -32,25 +32,36 @@ def get_db_connection():
         return None, None
 
 def fetch_cleaned_contacts(db):
-    """Fetches all records from the 'cleaned_contacts' collection and orders columns."""
+    """Fetches records, selecting and ordering only the desired columns to ensure a clean display."""
     try:
         cursor = db[CLEANED_COLLECTION_NAME].find().sort('_id', -1)
         df = pd.DataFrame(list(cursor))
+        
+        if df.empty:
+            return pd.DataFrame()
+
+        # MongoDB adds an '_id' column, which we remove for display
         if '_id' in df.columns:
             df = df.drop(columns=['_id'])
         
-        # **FIX:** Define a logical order for columns to display unified data clearly
+        # **FIX:** Define the exact columns and their order for a clean, consistent table.
+        # This prevents old or mismatched column names (like 'work_emails') from appearing.
         desired_order = [
-            "name", "emails", "phones", "source", 
-            "source_url", "domain", "created_at"
+            "name", 
+            "emails", 
+            "phones", 
+            "source", 
+            "source_url", 
+            "domain", 
+            "created_at"
         ]
         
-        existing_cols = [col for col in desired_order if col in df.columns]
+        # We will only show columns that are in our desired_order list.
+        # This makes the display robust against any old or malformed data in the database.
+        final_columns = [col for col in desired_order if col in df.columns]
         
-        # Add any other columns that might not be in the desired list to the end
-        other_cols = [col for col in df.columns if col not in existing_cols]
-        
-        return df[existing_cols + other_cols]
+        # Return the DataFrame with ONLY the selected and ordered columns.
+        return df[final_columns]
         
     except Exception as error:
         st.warning(f"⚠️ Could not fetch cleaned contacts. Collection might be empty. Error: {error}")
