@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 import plotly.graph_objects as go
 import plotly.express as px
 import time
@@ -14,36 +15,45 @@ load_dotenv()
 # ===============================
 # CONFIGURATION
 # ===============================
-POSTGRES_URL = os.getenv("POSTGRES_URL")
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 
 # ===============================
 # DATABASE FUNCTIONS
 # ===============================
-def get_db_connection():
-    """Establishes connection to the PostgreSQL database."""
+# Use Streamlit's resource caching to initialize the client once
+@st.cache_resource
+def init_connection():
+    """Initializes and returns a MongoDB client."""
     try:
-        return psycopg2.connect(POSTGRES_URL)
-    except psycopg2.OperationalError as e:
+        client = MongoClient(MONGO_URI)
+        client.admin.command('ismaster')
+        return client
+    except ConnectionFailure as e:
         st.error(f"❌ **Database Connection Error:** {e}")
         return None
 
-@st.cache_data(ttl=10) # Cache data for 10 seconds to improve performance
-def load_data():
-    """Loads email log data from the PostgreSQL database."""
+# Use data caching for fetching data, with the client as an argument
+@st.cache_data(ttl=10)
+def load_data(_client):
+    """Loads email log data from the MongoDB database."""
+    if _client is None:
+        return pd.DataFrame()
     try:
-        conn = get_db_connection()
-        df = pd.read_sql("SELECT * FROM email_logs ORDER BY timestamp DESC", conn)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        conn.close()
+        db = _client[MONGO_DB_NAME]
+        cursor = db.email_logs.find().sort('timestamp', -1)
+        df = pd.DataFrame(list(cursor))
+        if not df.empty and 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
         return df
-    except (Exception, psycopg2.DatabaseError):
+    except Exception as e:
+        st.warning(f"Could not load data. Error: {e}")
         return pd.DataFrame()
 
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.set_page_config(page_title="Email Dashboard", page_icon="📊", layout="wide")
     st.title("📊 Email Campaign Dashboard")
 
     st.sidebar.title("⚙️ Settings")
@@ -51,10 +61,13 @@ def main():
 
     last_updated_placeholder = st.empty()
     
-    df = load_data()
+    mongo_client = init_connection()
+    df = load_data(mongo_client)
 
-    if df.empty:
+    if mongo_client and df.empty:
         st.info("No email data to display yet. Send some emails and process replies to see the dashboard.")
+        time.sleep(auto_refresh_interval)
+        st.rerun()
         return
 
     # --- Pre-calculate all key metrics ---
@@ -81,25 +94,15 @@ def main():
         funnel_df = pd.DataFrame(funnel_data)
 
         bar_fig = px.bar(
-            funnel_df,
-            x='Count',
-            y='Stage',
-            orientation='h',
-            text='Count',
-            color='Stage',
-            color_discrete_sequence=px.colors.sequential.Teal,
+            funnel_df, x='Count', y='Stage', orientation='h', text='Count',
+            color='Stage', color_discrete_sequence=px.colors.sequential.Teal,
         )
         bar_fig.update_yaxes(categoryorder="total ascending")
         bar_fig.update_layout(
-            title="Campaign Progress",
-            xaxis_title="Number of Emails",
-            yaxis_title="Funnel Stage",
-            showlegend=False,
-            margin=dict(l=20, r=20, t=40, b=20),
-            height=400
+            title="Campaign Progress", xaxis_title="Number of Emails", yaxis_title="Funnel Stage",
+            showlegend=False, margin=dict(l=20, r=20, t=40, b=20), height=400
         )
         st.plotly_chart(bar_fig, use_container_width=True)
-
 
     with tab2:
         st.header("Performance Metrics")
@@ -122,30 +125,39 @@ def main():
         
         with col_pie:
             st.subheader("Reply Sentiment Breakdown")
-            sentiment_df = df[df['interest_level'].isin(['positive', 'negative'])]['interest_level'].value_counts().reset_index()
-            sentiment_df.columns = ['sentiment', 'count']
-            
-            if not sentiment_df.empty:
-                pie_fig = px.pie(sentiment_df, names='sentiment', values='count', 
-                                 color='sentiment',
-                                 color_discrete_map={'positive':'#2ca02c', 'negative':'#d62728'},
-                                 hole=.3)
-                pie_fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(pie_fig, use_container_width=True)
+            if 'interest_level' in df.columns:
+                sentiment_df = df[df['interest_level'].isin(['positive', 'negative'])]['interest_level'].value_counts().reset_index()
+                sentiment_df.columns = ['sentiment', 'count']
+                
+                if not sentiment_df.empty:
+                    pie_fig = px.pie(sentiment_df, names='sentiment', values='count', 
+                                    color='sentiment',
+                                    color_discrete_map={'positive':'#2ca02c', 'negative':'#d62728'},
+                                    hole=.3)
+                    pie_fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(pie_fig, use_container_width=True)
+                else:
+                    st.info("No positive or negative replies to analyze yet.")
             else:
-                st.info("No positive or negative replies to analyze yet.")
+                st.info("No sentiment data to analyze yet.")
 
         with col_bar:
             st.subheader("Activity by Type")
-            event_counts = df['event_type'].value_counts()
-            st.bar_chart(event_counts)
+            if 'event_type' in df.columns:
+                event_counts = df['event_type'].value_counts()
+                st.bar_chart(event_counts)
+            else:
+                st.info("No event data to plot.")
 
     with tab3:
         st.header("Full Activity Log")
         st.markdown("A detailed, searchable log of all email events.")
-        st.dataframe(df, use_container_width=True)
+        if '_id' in df.columns:
+            df_display = df.drop(columns=['_id'])
+        else:
+            df_display = df
+        st.dataframe(df_display, use_container_width=True)
 
-    # --- FIX: Removed the non-standard '-' characters for Windows compatibility ---
     last_updated_placeholder.text(f"Last updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     time.sleep(auto_refresh_interval)
