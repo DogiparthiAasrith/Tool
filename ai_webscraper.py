@@ -39,18 +39,13 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-# **FIX:** Definition of google_search, which was missing
+# **FIX:** This function was likely missing from your file. It is now restored.
 def google_search(query, num_results=5):
-    if not SERPAPI_API_KEY:
-        return [] # Return empty list if API key is missing
+    """Performs a Google search using the SerpAPI and returns the results."""
     params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
-    try:
-        search = GoogleSearch(params)
-        results = search.get_dict().get("organic_results", [])
-        return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
-    except Exception as e:
-        st.error(f"Error during Google search: {e}")
-        return []
+    search = GoogleSearch(params)
+    results = search.get_dict().get("organic_results", [])
+    return [{"title": r.get("title"), "url": r.get("link"), "snippet": r.get("snippet")} for r in results]
 
 def find_contact_page(website_url):
     try:
@@ -68,14 +63,16 @@ def find_contact_page(website_url):
 
 def scrape_contact_page(contact_url):
     emails, phones = [], []
-    if not contact_url: return {"emails": [], "phones": []}
+    if not contact_url:
+        return {"emails": [], "phones": []}
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(contact_url, headers=headers, timeout=10)
         text = resp.text
         emails = list(set(re.findall(EMAIL_REGEX, text)))
         phones = list(set(re.findall(PHONE_REGEX, text)))
-    except requests.exceptions.RequestException: pass
+    except requests.exceptions.RequestException:
+        pass
     return {"emails": emails, "phones": phones}
 
 def save_to_raw_scraped_log(db, data):
@@ -86,10 +83,14 @@ def save_to_raw_scraped_log(db, data):
 
 def save_to_cleaned_mongo(db, dict_data):
     source_url = dict_data.get("source_url")
-    if not source_url: return
+    if not source_url:
+        st.warning(f"⚠️ Skipped saving '{dict_data.get('name', 'Unknown')}' to cleaned contacts: Source URL is missing.")
+        return
     try:
         result = db[CLEANED_COLLECTION_NAME].update_one(
-            {'source_url': source_url}, {'$setOnInsert': dict_data}, upsert=True
+            {'source_url': source_url},
+            {'$setOnInsert': dict_data},
+            upsert=True
         )
         if result.upserted_id:
             st.success(f"✅ Added new unique contact '{dict_data.get('name')}' to cleaned data.")
@@ -135,7 +136,6 @@ def main():
             st.error("❌ SERPAPI_API_KEY is not set!")
             st.warning("Please add your SerpAPI key to your environment variables or Streamlit secrets to continue.")
             st.stop()
-
         if not query:
             st.warning("Please enter a search query!")
             return
@@ -153,18 +153,15 @@ def main():
                     contact_page = find_contact_page(website)
                     item["contact_info"] = scrape_contact_page(contact_page)
                     progress_bar.progress((i + 1) / len(results), text=f"Scraped: {website}")
-
             st.info("Saving results to the database...")
             df = process_and_save_results(results, query, db)
             st.success("✅ Scraping and saving process completed!")
-            
             st.subheader("Scraped Data from this Session")
             st.dataframe(df)
-            
             if not df.empty:
                 st.download_button(
-                    "Download Session Data (CSV)", 
-                    df.to_csv(index=False).encode("utf-8"), 
+                    "Download Session Data (CSV)",
+                    df.to_csv(index=False).encode("utf-8"),
                     file_name=f"scraped_{query.replace(' ','_')}.csv"
                 )
         finally:
