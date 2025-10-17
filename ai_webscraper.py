@@ -39,10 +39,7 @@ def get_db_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
-# **FIX:** This function definition was missing. It is now restored.
-# The NameError occurs because this block of code was not present in your script.
 def google_search(query, num_results=5):
-    """Performs a Google search using the SerpAPI and returns the results."""
     params = {"q": query, "api_key": SERPAPI_API_KEY, "num": num_results}
     search = GoogleSearch(params)
     results = search.get_dict().get("organic_results", [])
@@ -50,7 +47,7 @@ def google_search(query, num_results=5):
 
 def find_contact_page(website_url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/V/5.0"}
         resp = requests.get(website_url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
         for a in soup.find_all("a", href=True):
@@ -147,9 +144,7 @@ def main():
 
         try:
             with st.spinner("Searching Google and scraping websites..."):
-                # This call will now work because the function is defined above
                 results = google_search(query, num_results=10)
-                
                 progress_bar = st.progress(0, text="Scraping websites...")
                 for i, item in enumerate(results):
                     website = item.get("url")
