@@ -1,6 +1,6 @@
 import streamlit as st
 from contactout import main as contactout_main
-from ai_webscraper import main as web_scraper_main
+from ai_webscraper import main as webscraper_main
 from send_email import main as send_email_main
 from email_preview import main as email_preview_main
 from reply import main as reply_main
@@ -182,4 +182,5 @@ elif page == "Dashboard":
 # ===============================
 
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
+
 
