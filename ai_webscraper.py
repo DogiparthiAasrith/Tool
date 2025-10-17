@@ -109,9 +109,12 @@ def process_and_save_results(results, query, db):
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
         cleaned_data = {
-            "name": item.get("title", ""), "source_url": website_url, # This is the unique key
-            "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
-            "domain": website_url.split('/')[2] if website_url else None, "source": "Web Scraper",
+            "name": item.get("title", ""),
+            "source_url": website_url, # This is the unique key for scraped data
+            "emails": ", ".join(contact_info.get("emails", [])),
+            "phones": ", ".join(contact_info.get("phones", [])),
+            "domain": website_url.split('/')[2] if website_url else None,
+            "source": "Web Scraper",
             "created_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_cleaned_mongo(db, cleaned_data)
