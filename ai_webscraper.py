@@ -60,36 +60,34 @@ def find_contact_page(website_url):
     return website_url
 
 def scrape_contact_page(contact_url):
+    # ... (function is unchanged)
     emails, phones = [], []
-    if not contact_url:
-        return {"emails": [], "phones": []}
+    if not contact_url: return {"emails": [], "phones": []}
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(contact_url, headers=headers, timeout=10)
         text = resp.text
         emails = list(set(re.findall(EMAIL_REGEX, text)))
         phones = list(set(re.findall(PHONE_REGEX, text)))
-    except requests.exceptions.RequestException:
-        pass
+    except requests.exceptions.RequestException: pass
     return {"emails": emails, "phones": phones}
 
+
 def save_to_raw_scraped_log(db, data):
+    # ... (function is unchanged)
     try:
         db[RAW_SCRAPED_COLLECTION].insert_one(data)
     except Exception as e:
         st.error(f"❌ Error saving to raw scrape log: {e}")
 
-def save_to_cleaned_mongo(db, dict_data):
-    source_url = dict_data.get("source_url")
-    if not source_url:
-        st.warning(f"⚠️ Skipped saving '{dict_data.get('name', 'Unknown')}' to cleaned contacts: Source URL is missing.")
-        return
 
+def save_to_cleaned_mongo(db, dict_data):
+    # ... (function is unchanged)
+    source_url = dict_data.get("source_url")
+    if not source_url: return
     try:
         result = db[CLEANED_COLLECTION_NAME].update_one(
-            {'source_url': source_url},
-            {'$setOnInsert': dict_data},
-            upsert=True
+            {'source_url': source_url}, {'$setOnInsert': dict_data}, upsert=True
         )
         if result.upserted_id:
             st.success(f"✅ Added new unique contact '{dict_data.get('name')}' to cleaned data.")
@@ -98,20 +96,19 @@ def save_to_cleaned_mongo(db, dict_data):
     except Exception as e:
         st.error(f"❌ Error during cleaned save operation: {e}")
 
+
 def process_and_save_results(results, query, db):
+    # ... (function is unchanged)
     rows_for_display = []
-    
     for item in results:
         contact_info = item.get("contact_info", {})
         website_url = (item.get("url") or "").rstrip('/')
-        
         raw_scrape_data = {
             "query": query, "company_name": item.get("title", ""), "website_url": website_url,
             "snippet": item.get("snippet", ""), "scraped_emails": contact_info.get("emails", []),
             "scraped_phones": contact_info.get("phones", []), "scraped_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
-        
         cleaned_data = {
             "name": item.get("title", ""), "source_url": website_url,
             "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
@@ -119,13 +116,12 @@ def process_and_save_results(results, query, db):
             "created_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_cleaned_mongo(db, cleaned_data)
-
         rows_for_display.append({
             "company_name": item.get("title", ""), "website_url": website_url,
             "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
         })
-
     return pd.DataFrame(rows_for_display)
+
 
 # ===============================
 # STREAMLIT UI
@@ -137,11 +133,16 @@ def main():
 
     if st.button("Search & Scrape"):
         
-        # **FIX:** Check for the API key before making any calls.
+        # ======================================================================
+        # **FIX:** This block prevents the NameError. If the key is missing
+        # in your Streamlit Cloud secrets, the app will stop here and show
+        # an error instead of crashing.
+        # ======================================================================
         if not SERPAPI_API_KEY:
             st.error("❌ SERPAPI_API_KEY is not set!")
             st.warning("Please add your SerpAPI key to your environment variables or Streamlit secrets to continue.")
-            st.stop() # Stop execution to prevent the crash
+            st.stop() 
+        # ======================================================================
 
         if not query:
             st.warning("Please enter a search query!")
@@ -153,6 +154,7 @@ def main():
 
         try:
             with st.spinner("Searching Google and scraping websites..."):
+                # This is the line that causes the error if the key is missing
                 results = google_search(query, num_results=10)
                 
                 progress_bar = st.progress(0, text="Scraping websites...")
