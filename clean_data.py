@@ -32,18 +32,33 @@ def get_db_connection():
         return None, None
 
 def fetch_cleaned_contacts(db):
-    """Fetches all records directly from the 'cleaned_contacts' collection."""
+    """Fetches all records from the 'cleaned_contacts' collection and orders columns."""
     try:
-        # Find all documents and sort by the auto-generated _id for latest entries first
         cursor = db[CLEANED_COLLECTION_NAME].find().sort('_id', -1)
         df = pd.DataFrame(list(cursor))
-        # MongoDB adds an '_id' column, which you might want to remove for display
         if '_id' in df.columns:
             df = df.drop(columns=['_id'])
-        return df
+        
+        # Define a logical order for columns
+        desired_order = [
+            "name", "emails", "phones", "source", 
+            "source_url", "domain", "created_at"
+        ]
+        
+        # Get columns that exist in the dataframe, in the desired order
+        ordered_cols = [col for col in desired_order if col in df.columns]
+        
+        # Add any other columns that might exist but are not in the desired_order list
+        for col in df.columns:
+            if col not in ordered_cols:
+                ordered_cols.append(col)
+        
+        return df[ordered_cols]
+        
     except Exception as error:
         st.warning(f"⚠️ Could not fetch cleaned contacts. The collection might not exist yet. Error: {error}")
         return pd.DataFrame()
+
 
 def save_df_to_csv(df):
     """Saves the DataFrame to a CSV file for download."""
@@ -60,7 +75,7 @@ def main():
     Main function to display the cleaned data and provide a download option.
     """
     st.title("View and Download Cleaned Data")
-    st.markdown("This section displays the unique contacts collected so far. The list updates automatically as new, non-duplicate contacts are added.")
+    st.markdown("This section displays the unique contacts collected from all sources. The list updates automatically as new, non-duplicate contacts are added.")
 
     if st.button("🔄 Refresh Data"):
         st.rerun()
@@ -87,7 +102,7 @@ def main():
                     mime="text/csv"
                 )
     else:
-        st.info("ℹ️ No unique contacts found in the database yet. Go to 'Collect Contacts' to add some!")
+        st.info("ℹ️ No unique contacts found in the database yet. Go to 'Collect Contacts' or 'AI Web Scraper' to add some!")
 
 if __name__ == '__main__':
     main()
