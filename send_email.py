@@ -27,7 +27,7 @@ def get_db_connection():
         db = client[MONGO_DB_NAME]
         return client, db
     except ConnectionFailure as e:
-        st.error(f"❌ Database Connection Error: {e}")
+        st.error(f"❌ **Database Connection Error:** {e}")
         return None, None
 
 def fetch_cleaned_contacts(db):
@@ -104,7 +104,7 @@ def get_fallback_template(domain, name):
     return f"{greeting}\n\n{body}{signature}"
 
 def generate_personalized_email_body(contact_details):
-    """Tries to use OpenAI (GPT-4o), but falls back to hardcoded templates on any failure."""
+    """The PRIMARY generation function. Uses GPT-4o for the highest quality first draft."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
@@ -138,9 +138,8 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using a pre-written template instead. (Error: {e})")
         return get_fallback_template(domain, name)
 
-# --- NEW FUNCTION: Uses a different model and prompt for regeneration ---
-def regenerate_alternative_body(contact_details):
-    """Generates an alternative email body using GPT-3.5-Turbo with a more engaging prompt."""
+def regenerate_email_body(contact_details):
+    """The REGENERATION function. Uses GPT-3.5-Turbo for a fast, alternative draft."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
@@ -148,28 +147,25 @@ def regenerate_alternative_body(contact_details):
     signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
 
     try:
-        # This prompt asks for a more creative and engaging angle
         prompt = f"""
-        Your previous email draft was not compelling enough. Write a new outreach email body with a different, more engaging angle.
+        Write a direct and concise outreach email body.
         The target is {name or 'a professional'} in the {domain} sector. LinkedIn: {linkedin}.
         My name is Aasrith from Morphius AI.
 
-        Your entire response should be ONLY the email content. Follow these rules:
-        1. Start with the greeting: "{greeting}"
-        2. Instead of a generic introduction, try to ask a question related to their {domain} industry or mention a surprising statistic to grab their attention.
-        3. Briefly connect that hook to how Morphius AI can help. Keep it short and intriguing.
-        4. End with the exact closing: "{signature}"
+        Your entire response should be ONLY the email content, following these rules precisely:
+        1. Start the email body directly with the greeting: "{greeting}"
+        2. Get straight to the point about Morphius AI and why you're connecting. Keep this main part under 90 words.
+        3. End the email body with the exact closing: "{signature}"
 
-        Do NOT include a "Subject:" line.
+        Do NOT include a "Subject:" line or any other text.
         """
         response = client.chat.completions.create(
-            # Using a different model for a different style
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a creative marketing assistant. Your job is to rewrite email drafts to make them more engaging and less generic."},
+                {"role": "system", "content": "You are a business development assistant who writes direct and to-the-point emails."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=300, temperature=0.8,
+            max_tokens=250, temperature=0.7,
         )
         return response.choices[0].message.content.strip()
 
@@ -276,15 +272,21 @@ def main():
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
-        st.info("Edit the drafts directly or use the button below to generate a version with a different angle.")
+        st.info("Edit the drafts directly, regenerate a new version, or clear the text to write your own.")
 
-        # --- NEW, SIMPLIFIED CALLBACK FUNCTION ---
-        def handle_regenerate_alternative(index):
+        def handle_regenerate(index):
             email_draft = st.session_state.edited_emails[index]
-            with st.spinner("Asking AI (GPT-3.5) for a new angle..."):
-                new_body = regenerate_alternative_body(email_draft['contact_details'])
+            with st.spinner("Asking AI (GPT-3.5) for a new version..."):
+                new_body = regenerate_email_body(email_draft['contact_details'])
                 st.session_state.edited_emails[index]['body'] = new_body
-                st.toast(f"Generated a new version for {email_draft['name']}!")
+                st.toast(f"Generated a new draft for {email_draft['name']}!")
+
+        # --- CALLBACK FOR THE CLEAR BUTTON ---
+        def handle_clear(index):
+            email_draft = st.session_state.edited_emails[index]
+            manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+            st.session_state.edited_emails[index]['body'] = manual_template
+            st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
 
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
@@ -305,14 +307,25 @@ def main():
                     args=(i,)
                 )
 
-                # --- NEW, SIMPLIFIED BUTTON LAYOUT ---
-                st.button(
-                    "🔄 Try a Different Angle",
-                    key=f"regen_alt_{i}",
-                    on_click=handle_regenerate_alternative,
-                    args=(i,),
-                    use_container_width=True
-                )
+                # --- TWO-COLUMN LAYOUT FOR BUTTONS ---
+                b_col1, b_col2 = st.columns(2)
+                with b_col1:
+                    st.button(
+                        "🔄 Regenerate", 
+                        key=f"regen_{i}", 
+                        on_click=handle_regenerate, 
+                        args=(i,), 
+                        use_container_width=True
+                    )
+                
+                with b_col2:
+                    st.button(
+                        "✍️ Clear & Write Manually",
+                        key=f"clear_{i}",
+                        on_click=handle_clear,
+                        args=(i,),
+                        use_container_width=True
+                    )
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
