@@ -270,14 +270,20 @@ def main():
                     if st.button("🔄 Regenerate Body", key=f"regen_{i}", use_container_width=True):
                         with st.spinner("Asking AI for a new version..."):
                             new_body = generate_personalized_email_body(email_draft['contact_details'])
+                            # Update the main data structure
                             st.session_state.edited_emails[i]['body'] = new_body
+                            # FIX: Explicitly update the widget's state too
+                            st.session_state[f"body_{i}"] = new_body
                             st.toast(f"Generated a new draft for {email_draft['name']}!")
                         st.rerun()
 
                 with b_col2:
                     if st.button("✍ Clear & Write Manually", key=f"clear_{i}", use_container_width=True):
                         manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+                        # Update the main data structure
                         st.session_state.edited_emails[i]['body'] = manual_template
+                        # FIX: Explicitly update the widget's state too
+                        st.session_state[f"body_{i}"] = manual_template
                         st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
                         st.rerun()
 
