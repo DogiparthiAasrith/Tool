@@ -31,6 +31,7 @@ def get_db_connection():
         st.error(e)
         return None, None
 
+# **MODIFIED:** This function now fetches the new email columns.
 def fetch_cleaned_contacts(db):
     """Fetches records, selecting and ordering only the desired columns to ensure a clean display."""
     try:
@@ -40,27 +41,23 @@ def fetch_cleaned_contacts(db):
         if df.empty:
             return pd.DataFrame()
 
-        # MongoDB adds an '_id' column, which we remove for display
         if '_id' in df.columns:
             df = df.drop(columns=['_id'])
         
-        # **FIX:** Define the exact columns and their order for a clean, consistent table.
-        # This prevents old or mismatched column names (like 'work_emails') from appearing.
+        # **FIX:** Update the desired column order to show the new email fields.
         desired_order = [
-            "name", 
-            "emails", 
-            "phones", 
-            "source", 
-            "source_url", 
-            "domain", 
+            "name",
+            "work_emails",
+            "personal_emails",
+            "phones",
+            "source",
+            "source_url",
+            "domain",
             "created_at"
         ]
         
-        # We will only show columns that are in our desired_order list.
-        # This makes the display robust against any old or malformed data in the database.
         final_columns = [col for col in desired_order if col in df.columns]
         
-        # Return the DataFrame with ONLY the selected and ordered columns.
         return df[final_columns]
         
     except Exception as error:
