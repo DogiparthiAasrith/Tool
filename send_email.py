@@ -104,7 +104,7 @@ def get_fallback_template(domain, name):
     return f"{greeting}\n\n{body}{signature}"
 
 def generate_personalized_email_body(contact_details):
-    """Tries to use OpenAI, but falls back to hardcoded templates on any failure."""
+    """Tries to use OpenAI (GPT-4o), but falls back to hardcoded templates on any failure."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
@@ -138,9 +138,9 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using a pre-written template instead. (Error: {e})")
         return get_fallback_template(domain, name)
 
-# --- NEW FUNCTION: Uses a different model for an alternative style ---
-def generate_direct_email_body(contact_details):
-    """Generates an alternative email body using a different model and prompt."""
+# --- NEW FUNCTION: Uses a different model and prompt for regeneration ---
+def regenerate_alternative_body(contact_details):
+    """Generates an alternative email body using GPT-3.5-Turbo with a more engaging prompt."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
@@ -148,27 +148,28 @@ def generate_direct_email_body(contact_details):
     signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
 
     try:
-        # This prompt asks for a more direct and concise style
+        # This prompt asks for a more creative and engaging angle
         prompt = f"""
-        Write a very direct and concise outreach email body.
+        Your previous email draft was not compelling enough. Write a new outreach email body with a different, more engaging angle.
         The target is {name or 'a professional'} in the {domain} sector. LinkedIn: {linkedin}.
         My name is Aasrith from Morphius AI.
 
-        Your entire response should be ONLY the email content, following these rules precisely:
-        1. Start the email body directly with the greeting: "{greeting}"
-        2. Get straight to the point about Morphius AI and why you're connecting. Keep this main part under 90 words.
-        3. End the email body with the exact closing: "{signature}"
+        Your entire response should be ONLY the email content. Follow these rules:
+        1. Start with the greeting: "{greeting}"
+        2. Instead of a generic introduction, try to ask a question related to their {domain} industry or mention a surprising statistic to grab their attention.
+        3. Briefly connect that hook to how Morphius AI can help. Keep it short and intriguing.
+        4. End with the exact closing: "{signature}"
 
-        Do NOT include a "Subject:" line or any other text.
+        Do NOT include a "Subject:" line.
         """
         response = client.chat.completions.create(
-            # Using a different, faster model for variety
+            # Using a different model for a different style
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a business development assistant who writes direct and to-the-point emails."},
+                {"role": "system", "content": "You are a creative marketing assistant. Your job is to rewrite email drafts to make them more engaging and less generic."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=250, temperature=0.7,
+            max_tokens=300, temperature=0.8,
         )
         return response.choices[0].message.content.strip()
 
@@ -249,7 +250,7 @@ def main():
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
         st.session_state.edited_emails = []
-        with st.spinner("Generating drafts..."):
+        with st.spinner("Generating drafts with GPT-4o..."):
             for i, row in selected_rows.iterrows():
                 
                 to_email = None
@@ -275,29 +276,15 @@ def main():
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
-        st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
+        st.info("Edit the drafts directly or use the button below to generate a version with a different angle.")
 
-        # --- Define button callbacks ---
-        def handle_regenerate(index):
+        # --- NEW, SIMPLIFIED CALLBACK FUNCTION ---
+        def handle_regenerate_alternative(index):
             email_draft = st.session_state.edited_emails[index]
-            with st.spinner("Asking AI (GPT-4o) for a new version..."):
-                new_body = generate_personalized_email_body(email_draft['contact_details'])
+            with st.spinner("Asking AI (GPT-3.5) for a new angle..."):
+                new_body = regenerate_alternative_body(email_draft['contact_details'])
                 st.session_state.edited_emails[index]['body'] = new_body
-                st.toast(f"Generated a new draft for {email_draft['name']}!")
-
-        # --- NEW CALLBACK for the alternative button ---
-        def handle_regenerate_direct(index):
-            email_draft = st.session_state.edited_emails[index]
-            with st.spinner("Asking AI (GPT-3.5) for a direct version..."):
-                new_body = generate_direct_email_body(email_draft['contact_details'])
-                st.session_state.edited_emails[index]['body'] = new_body
-                st.toast(f"Generated a new direct draft for {email_draft['name']}!")
-
-        def handle_clear(index):
-            email_draft = st.session_state.edited_emails[index]
-            manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-            st.session_state.edited_emails[index]['body'] = manual_template
-            st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
+                st.toast(f"Generated a new version for {email_draft['name']}!")
 
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
@@ -318,36 +305,14 @@ def main():
                     args=(i,)
                 )
 
-                # --- UPDATED UI: Switched to 3 columns for 3 buttons ---
-                b_col1, b_col2, b_col3 = st.columns(3)
-                with b_col1:
-                    st.button(
-                        "🔄 Regenerate", 
-                        key=f"regen_{i}", 
-                        on_click=handle_regenerate, 
-                        args=(i,), 
-                        use_container_width=True
-                    )
-                
-                # --- NEW BUTTON in the second column ---
-                with b_col2:
-                    st.button(
-                        "✨ Regenerate (Direct)",
-                        key=f"regen_direct_{i}",
-                        on_click=handle_regenerate_direct,
-                        args=(i,),
-                        use_container_width=True
-                    )
-
-                # --- Clear button moved to the third column ---
-                with b_col3:
-                    st.button(
-                        "✍ Clear & Write Manually", 
-                        key=f"clear_{i}", 
-                        on_click=handle_clear, 
-                        args=(i,), 
-                        use_container_width=True
-                    )
+                # --- NEW, SIMPLIFIED BUTTON LAYOUT ---
+                st.button(
+                    "🔄 Try a Different Angle",
+                    key=f"regen_alt_{i}",
+                    on_click=handle_regenerate_alternative,
+                    args=(i,),
+                    use_container_width=True
+                )
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
@@ -363,4 +328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
