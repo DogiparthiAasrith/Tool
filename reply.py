@@ -79,8 +79,6 @@ def check_interest_manually(email_body):
 def check_interest_with_openai(email_body):
     """Tries to classify business interest with OpenAI, falls back to manual check on failure."""
     try:
-        # --- CORRECTED & IMPROVED PROMPT ---
-        # This new prompt gives the AI better context and examples to ensure accuracy.
         system_prompt = """
         You are an expert assistant who classifies email replies based on business interest.
         The user was sent a business outreach email. Analyze their reply to determine if their intent is positive (interested), negative (not interested), or neutral (unclear, asking for more info).
@@ -140,7 +138,6 @@ def send_reply(db, to_email, original_subject, interest_level, mail_id):
     """Sends a reply based on the classified interest level."""
     if interest_level == "positive":
         subject = f"Re: {original_subject}"
-        # MODIFIED: Using the new generic variable name
         body = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {SCHEDULING_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
     elif interest_level in ["negative", "neutral"]:
         subject = f"Re: {original_subject}"
@@ -189,7 +186,6 @@ def process_follow_ups(db):
     if not candidates:
         return 0
 
-    st.info("--- Sending Follow-Up Emails ---")
     unsubscribed_docs = db.unsubscribe_list.find({}, {'email': 1})
     unsubscribed_emails = {doc['email'] for doc in unsubscribed_docs}
     actions_taken = 0
@@ -225,7 +221,6 @@ def process_unsubscribes(db):
     
     if not sent_counts: return 0
 
-    st.info("--- Updating Unsubscribe List ---")
     actions_taken = 0
     for doc in sent_counts:
         email_addr = doc['_id']
@@ -256,10 +251,11 @@ def main():
     setup_database_indexes(db)
 
     if st.button("Check Emails & Run Automations"):
-        with st.spinner("Processing..."):
-            st.info("--- Checking for new replies ---")
-            unread_emails = get_unread_emails()
+        with st.spinner("Processing all tasks..."):
             
+            # --- STEP 1: PROCESS NEW REPLIES ---
+            st.info("--- 1. Checking for new replies ---")
+            unread_emails = get_unread_emails()
             if unread_emails:
                 st.write(f"Found {len(unread_emails)} new email(s).")
                 for mail in unread_emails:
@@ -267,17 +263,28 @@ def main():
                     log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
                     st.write(f"-> Interest level: **{interest}**")
-                    send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
+                    send_reply(db, mail["from"], mail["subject"], interest, mail_id)
                 st.success("✅ Finished processing new replies.")
             else:
                 st.write("No new replies to process.")
-                follow_ups_sent = process_follow_ups(db)
-                unsubscribes_processed = process_unsubscribes(db)
-                
-                if follow_ups_sent == 0 and unsubscribes_processed == 0:
-                    st.info("No pending automated tasks found.")
-                else:
-                    st.success("✅ Automated tasks complete.")
+            
+            # --- STEP 2: PROCESS FOLLOW-UPS (ALWAYS RUNS) ---
+            st.info("--- 2. Checking for pending follow-ups ---")
+            follow_ups_sent = process_follow_ups(db)
+            if follow_ups_sent > 0:
+                 st.write(f"Sent {follow_ups_sent} follow-up email(s).")
+            else:
+                st.write("No contacts needed a follow-up.")
+
+            # --- STEP 3: PROCESS UNSUBSCRIBES (ALWAYS RUNS) ---
+            st.info("--- 3. Checking for unresponsive contacts ---")
+            unsubscribes_processed = process_unsubscribes(db)
+            if unsubscribes_processed > 0:
+                st.write(f"Unsubscribed {unsubscribes_processed} contact(s) due to no reply.")
+            else:
+                st.write("No contacts met the criteria for unsubscribing.")
+            
+            st.success("✅ All automated tasks complete.")
 
     client.close()
 
