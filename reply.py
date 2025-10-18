@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import imaplib
 import email
@@ -82,7 +80,7 @@ def check_interest_with_openai(email_body):
     """Tries to classify interest with OpenAI, falls back to manual check on failure."""
     try:
         prompt = f"Analyze the sentiment of this email reply. Respond with only one word: 'positive', 'negative', or 'neutral'.\n\nEmail: \"{email_body}\"\n\nClassification:"
-        response = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
+        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
         interest = response.choices[0].message.content.strip().lower().replace(".", "")
         return interest if interest in ["positive", "negative", "neutral"] else "neutral"
     except Exception as e:
@@ -265,4 +263,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
