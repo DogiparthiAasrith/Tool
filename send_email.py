@@ -27,7 +27,7 @@ def get_db_connection():
         db = client[MONGO_DB_NAME]
         return client, db
     except ConnectionFailure as e:
-        st.error(f"❌ **Database Connection Error:** {e}")
+        st.error(f"❌ Database Connection Error: {e}")
         return None, None
 
 def fetch_cleaned_contacts(db):
@@ -104,7 +104,7 @@ def get_fallback_template(domain, name):
     return f"{greeting}\n\n{body}{signature}"
 
 def generate_personalized_email_body(contact_details):
-    """The PRIMARY generation function. Uses GPT-4o for the highest quality first draft."""
+    """Tries to use OpenAI, but falls back to hardcoded templates on any failure."""
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
@@ -136,41 +136,6 @@ def generate_personalized_email_body(contact_details):
 
     except Exception as e:
         st.warning(f"⚠ OpenAI API failed. Using a pre-written template instead. (Error: {e})")
-        return get_fallback_template(domain, name)
-
-def regenerate_email_body(contact_details):
-    """The REGENERATION function. Uses GPT-3.5-Turbo for a fast, alternative draft."""
-    name = contact_details.get('name')
-    domain = contact_details.get('domain', 'their industry')
-    linkedin = contact_details.get('linkedin_url', '')
-    greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
-    signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-
-    try:
-        prompt = f"""
-        Write a direct and concise outreach email body.
-        The target is {name or 'a professional'} in the {domain} sector. LinkedIn: {linkedin}.
-        My name is Aasrith from Morphius AI.
-
-        Your entire response should be ONLY the email content, following these rules precisely:
-        1. Start the email body directly with the greeting: "{greeting}"
-        2. Get straight to the point about Morphius AI and why you're connecting. Keep this main part under 90 words.
-        3. End the email body with the exact closing: "{signature}"
-
-        Do NOT include a "Subject:" line or any other text.
-        """
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a business development assistant who writes direct and to-the-point emails."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=250, temperature=0.7,
-        )
-        return response.choices[0].message.content.strip()
-
-    except Exception as e:
-        st.warning(f"⚠ OpenAI API (alternative) failed. Using a pre-written template instead. (Error: {e})")
         return get_fallback_template(domain, name)
 
 # ===============================
@@ -246,22 +211,29 @@ def main():
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
         st.session_state.edited_emails = []
-        with st.spinner("Generating drafts with GPT-4o..."):
+        with st.spinner("Generating drafts..."):
             for i, row in selected_rows.iterrows():
                 
+                # --- CORRECTED & ROBUST email selection logic ---
                 to_email = None
+                
+                # Safely get the work email value
                 work_email_val = row.get('work_emails')
+                # Check if it's a valid, non-empty string
                 if isinstance(work_email_val, str) and work_email_val.strip():
-                    to_email = work_email_val.split(',')[0].strip()
+                    to_email = work_email_val.split(',')[0].strip() # Take the first email if multiple exist
 
+                # If no valid work email was found, try the personal email
                 if not to_email:
                     personal_email_val = row.get('personal_emails')
                     if isinstance(personal_email_val, str) and personal_email_val.strip():
                         to_email = personal_email_val.split(',')[0].strip()
 
+                # If still no email after checking both, skip this contact and warn the user
                 if not to_email:
                     st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
                     continue
+                # --- END OF CORRECTION ---
 
                 body = generate_personalized_email_body(row)
                 st.session_state.edited_emails.append({
@@ -272,21 +244,7 @@ def main():
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
-        st.info("Edit the drafts directly, regenerate a new version, or clear the text to write your own.")
-
-        def handle_regenerate(index):
-            email_draft = st.session_state.edited_emails[index]
-            with st.spinner("Asking AI (GPT-3.5) for a new version..."):
-                new_body = regenerate_email_body(email_draft['contact_details'])
-                st.session_state.edited_emails[index]['body'] = new_body
-                st.toast(f"Generated a new draft for {email_draft['name']}!")
-
-        # --- CALLBACK FOR THE CLEAR BUTTON ---
-        def handle_clear(index):
-            email_draft = st.session_state.edited_emails[index]
-            manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-            st.session_state.edited_emails[index]['body'] = manual_template
-            st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
+        st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
 
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
@@ -307,25 +265,21 @@ def main():
                     args=(i,)
                 )
 
-                # --- TWO-COLUMN LAYOUT FOR BUTTONS ---
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
-                    st.button(
-                        "🔄 Regenerate", 
-                        key=f"regen_{i}", 
-                        on_click=handle_regenerate, 
-                        args=(i,), 
-                        use_container_width=True
-                    )
-                
+                    if st.button("🔄 Regenerate Body", key=f"regen_{i}", use_container_width=True):
+                        with st.spinner("Asking AI for a new version..."):
+                            new_body = generate_personalized_email_body(email_draft['contact_details'])
+                            st.session_state.edited_emails[i]['body'] = new_body
+                            st.toast(f"Generated a new draft for {email_draft['name']}!")
+                        st.rerun()
+
                 with b_col2:
-                    st.button(
-                        "✍️ Clear & Write Manually",
-                        key=f"clear_{i}",
-                        on_click=handle_clear,
-                        args=(i,),
-                        use_container_width=True
-                    )
+                    if st.button("✍ Clear & Write Manually", key=f"clear_{i}", use_container_width=True):
+                        manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+                        st.session_state.edited_emails[i]['body'] = manual_template
+                        st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
+                        st.rerun()
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
