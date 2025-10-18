@@ -1,5 +1,3 @@
---- START OF FILE send_email.py ---
-
 import streamlit as st
 import pandas as pd
 from pymongo import MongoClient
@@ -365,3 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
