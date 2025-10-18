@@ -263,7 +263,8 @@ def main():
                     log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
                     st.write(f"-> Interest level: **{interest}**")
-                    send_reply(db, mail["from"], mail["subject"], interest, mail_id)
+                    # --- THIS IS THE CORRECTED LINE ---
+                    send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
                 st.success("✅ Finished processing new replies.")
             else:
                 st.write("No new replies to process.")
