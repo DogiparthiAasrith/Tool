@@ -39,6 +39,7 @@ def enrich_people(payload):
         st.error(f"A network error occurred: {e}")
         return None, None
 
+# **MODIFIED:** This function now separates work and personal emails.
 def extract_relevant_fields(response, original_payload={}):
     profile = response.get("profile", response)
     linkedin_url = profile.get("linkedin_url")
@@ -48,8 +49,10 @@ def extract_relevant_fields(response, original_payload={}):
 
     return {
         "name": profile.get("full_name"),
-        "source_url": (linkedin_url or "").rstrip('/'), # This is the unique key
-        "emails": ", ".join(profile.get("work_email", []) + profile.get("personal_email", [])),
+        "source_url": (linkedin_url or "").rstrip('/'),
+        # **FIX:** Create separate fields for work and personal emails.
+        "work_emails": ", ".join(profile.get("work_email", [])),
+        "personal_emails": ", ".join(profile.get("personal_email", [])),
         "phones": ", ".join(profile.get("phone", [])),
         "domain": profile.get("company", {}).get("domain") if profile.get("company") else None,
         "source": "ContactOut",
