@@ -1,3 +1,5 @@
+--- START OF FILE send_email.py ---
+
 import streamlit as st
 import pandas as pd
 from pymongo import MongoClient
@@ -138,6 +140,44 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using a pre-written template instead. (Error: {e})")
         return get_fallback_template(domain, name)
 
+# --- NEW FUNCTION: Uses a different model for an alternative style ---
+def generate_direct_email_body(contact_details):
+    """Generates an alternative email body using a different model and prompt."""
+    name = contact_details.get('name')
+    domain = contact_details.get('domain', 'their industry')
+    linkedin = contact_details.get('linkedin_url', '')
+    greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
+    signature = "\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+
+    try:
+        # This prompt asks for a more direct and concise style
+        prompt = f"""
+        Write a very direct and concise outreach email body.
+        The target is {name or 'a professional'} in the {domain} sector. LinkedIn: {linkedin}.
+        My name is Aasrith from Morphius AI.
+
+        Your entire response should be ONLY the email content, following these rules precisely:
+        1. Start the email body directly with the greeting: "{greeting}"
+        2. Get straight to the point about Morphius AI and why you're connecting. Keep this main part under 90 words.
+        3. End the email body with the exact closing: "{signature}"
+
+        Do NOT include a "Subject:" line or any other text.
+        """
+        response = client.chat.completions.create(
+            # Using a different, faster model for variety
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a business development assistant who writes direct and to-the-point emails."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=250, temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        st.warning(f"⚠ OpenAI API (alternative) failed. Using a pre-written template instead. (Error: {e})")
+        return get_fallback_template(domain, name)
+
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
@@ -214,26 +254,19 @@ def main():
         with st.spinner("Generating drafts..."):
             for i, row in selected_rows.iterrows():
                 
-                # --- CORRECTED & ROBUST email selection logic ---
                 to_email = None
-                
-                # Safely get the work email value
                 work_email_val = row.get('work_emails')
-                # Check if it's a valid, non-empty string
                 if isinstance(work_email_val, str) and work_email_val.strip():
-                    to_email = work_email_val.split(',')[0].strip() # Take the first email if multiple exist
+                    to_email = work_email_val.split(',')[0].strip()
 
-                # If no valid work email was found, try the personal email
                 if not to_email:
                     personal_email_val = row.get('personal_emails')
                     if isinstance(personal_email_val, str) and personal_email_val.strip():
                         to_email = personal_email_val.split(',')[0].strip()
 
-                # If still no email after checking both, skip this contact and warn the user
                 if not to_email:
                     st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
                     continue
-                # --- END OF CORRECTION ---
 
                 body = generate_personalized_email_body(row)
                 st.session_state.edited_emails.append({
@@ -246,20 +279,27 @@ def main():
         st.header("Step 3: Review and Edit Drafts")
         st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
 
-        # --- CORRECTED LOGIC: Define button callbacks ---
+        # --- Define button callbacks ---
         def handle_regenerate(index):
             email_draft = st.session_state.edited_emails[index]
-            with st.spinner("Asking AI for a new version..."):
+            with st.spinner("Asking AI (GPT-4o) for a new version..."):
                 new_body = generate_personalized_email_body(email_draft['contact_details'])
                 st.session_state.edited_emails[index]['body'] = new_body
                 st.toast(f"Generated a new draft for {email_draft['name']}!")
+
+        # --- NEW CALLBACK for the alternative button ---
+        def handle_regenerate_direct(index):
+            email_draft = st.session_state.edited_emails[index]
+            with st.spinner("Asking AI (GPT-3.5) for a direct version..."):
+                new_body = generate_direct_email_body(email_draft['contact_details'])
+                st.session_state.edited_emails[index]['body'] = new_body
+                st.toast(f"Generated a new direct draft for {email_draft['name']}!")
 
         def handle_clear(index):
             email_draft = st.session_state.edited_emails[index]
             manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
             st.session_state.edited_emails[index]['body'] = manual_template
             st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
-        # --- END OF CORRECTION ---
 
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
@@ -280,18 +320,29 @@ def main():
                     args=(i,)
                 )
 
-                b_col1, b_col2 = st.columns(2)
+                # --- UPDATED UI: Switched to 3 columns for 3 buttons ---
+                b_col1, b_col2, b_col3 = st.columns(3)
                 with b_col1:
-                    # --- CORRECTED LOGIC: Use on_click for buttons ---
                     st.button(
-                        "🔄 Regenerate Body", 
+                        "🔄 Regenerate", 
                         key=f"regen_{i}", 
                         on_click=handle_regenerate, 
                         args=(i,), 
                         use_container_width=True
                     )
-
+                
+                # --- NEW BUTTON in the second column ---
                 with b_col2:
+                    st.button(
+                        "✨ Regenerate (Direct)",
+                        key=f"regen_direct_{i}",
+                        on_click=handle_regenerate_direct,
+                        args=(i,),
+                        use_container_width=True
+                    )
+
+                # --- Clear button moved to the third column ---
+                with b_col3:
                     st.button(
                         "✍ Clear & Write Manually", 
                         key=f"clear_{i}", 
@@ -299,7 +350,6 @@ def main():
                         args=(i,), 
                         use_container_width=True
                     )
-                    # --- END OF CORRECTION ---
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
