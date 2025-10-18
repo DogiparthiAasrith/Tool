@@ -246,6 +246,21 @@ def main():
         st.header("Step 3: Review and Edit Drafts")
         st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
 
+        # --- CORRECTED LOGIC: Define button callbacks ---
+        def handle_regenerate(index):
+            email_draft = st.session_state.edited_emails[index]
+            with st.spinner("Asking AI for a new version..."):
+                new_body = generate_personalized_email_body(email_draft['contact_details'])
+                st.session_state.edited_emails[index]['body'] = new_body
+                st.toast(f"Generated a new draft for {email_draft['name']}!")
+
+        def handle_clear(index):
+            email_draft = st.session_state.edited_emails[index]
+            manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+            st.session_state.edited_emails[index]['body'] = manual_template
+            st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
+        # --- END OF CORRECTION ---
+
         for i, email_draft in enumerate(st.session_state.edited_emails):
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
                 
@@ -267,25 +282,24 @@ def main():
 
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
-                    if st.button("🔄 Regenerate Body", key=f"regen_{i}", use_container_width=True):
-                        with st.spinner("Asking AI for a new version..."):
-                            new_body = generate_personalized_email_body(email_draft['contact_details'])
-                            # Update the main data structure
-                            st.session_state.edited_emails[i]['body'] = new_body
-                            # FIX: Explicitly update the widget's state too
-                            st.session_state[f"body_{i}"] = new_body
-                            st.toast(f"Generated a new draft for {email_draft['name']}!")
-                        st.rerun()
+                    # --- CORRECTED LOGIC: Use on_click for buttons ---
+                    st.button(
+                        "🔄 Regenerate Body", 
+                        key=f"regen_{i}", 
+                        on_click=handle_regenerate, 
+                        args=(i,), 
+                        use_container_width=True
+                    )
 
                 with b_col2:
-                    if st.button("✍ Clear & Write Manually", key=f"clear_{i}", use_container_width=True):
-                        manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-                        # Update the main data structure
-                        st.session_state.edited_emails[i]['body'] = manual_template
-                        # FIX: Explicitly update the widget's state too
-                        st.session_state[f"body_{i}"] = manual_template
-                        st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
-                        st.rerun()
+                    st.button(
+                        "✍ Clear & Write Manually", 
+                        key=f"clear_{i}", 
+                        on_click=handle_clear, 
+                        args=(i,), 
+                        use_container_width=True
+                    )
+                    # --- END OF CORRECTION ---
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
