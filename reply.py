@@ -77,10 +77,30 @@ def check_interest_manually(email_body):
     return "neutral"
 
 def check_interest_with_openai(email_body):
-    """Tries to classify interest with OpenAI, falls back to manual check on failure."""
+    """Tries to classify business interest with OpenAI, falls back to manual check on failure."""
     try:
-        prompt = f"Analyze the sentiment of this email reply. Respond with only one word: 'positive', 'negative', or 'neutral'.\n\nEmail: \"{email_body}\"\n\nClassification:"
-        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}], max_tokens=5, temperature=0)
+        # --- CORRECTED & IMPROVED PROMPT ---
+        # This new prompt gives the AI better context and examples to ensure accuracy.
+        system_prompt = """
+        You are an expert assistant who classifies email replies based on business interest.
+        The user was sent a business outreach email. Analyze their reply to determine if their intent is positive (interested), negative (not interested), or neutral (unclear, asking for more info).
+        Respond with ONLY one word: 'positive', 'negative', or 'neutral'.
+
+        Examples:
+        - Email: "This looks great, let's connect." -> positive
+        - Email: "I am not interested at this time." -> negative
+        - Email: "Can you send me more details?" -> neutral
+        - Email: "Please remove me from your mailing list." -> negative
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Classify this email reply:\n\n\"{email_body}\""}
+            ],
+            max_tokens=5,
+            temperature=0
+        )
         interest = response.choices[0].message.content.strip().lower().replace(".", "")
         return interest if interest in ["positive", "negative", "neutral"] else "neutral"
     except Exception as e:
