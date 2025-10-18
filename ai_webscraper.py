@@ -26,6 +26,12 @@ CLEANED_COLLECTION_NAME = "cleaned_contacts"
 EMAIL_REGEX = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
 PHONE_REGEX = r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
 
+# **NEW:** List of common free email providers to help classify emails.
+PERSONAL_EMAIL_DOMAINS = [
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
+    "icloud.com", "protonmail.com", "zoho.com", "gmx.com"
+]
+
 # ===============================
 # FUNCTIONS
 # ===============================
@@ -97,30 +103,43 @@ def save_to_cleaned_mongo(db, dict_data):
     except Exception as e:
         st.error(f"❌ Error during cleaned save operation: {e}")
 
+# **MODIFIED:** This function now classifies scraped emails before saving.
 def process_and_save_results(results, query, db):
     rows_for_display = []
     for item in results:
         contact_info = item.get("contact_info", {})
+        all_emails = contact_info.get("emails", [])
         website_url = (item.get("url") or "").rstrip('/')
+
+        # Classify emails
+        work_emails = [email for email in all_emails if email.split('@')[-1] not in PERSONAL_EMAIL_DOMAINS]
+        personal_emails = [email for email in all_emails if email.split('@')[-1] in PERSONAL_EMAIL_DOMAINS]
+
         raw_scrape_data = {
             "query": query, "company_name": item.get("title", ""), "website_url": website_url,
-            "snippet": item.get("snippet", ""), "scraped_emails": contact_info.get("emails", []),
+            "snippet": item.get("snippet", ""), "scraped_emails": all_emails,
             "scraped_phones": contact_info.get("phones", []), "scraped_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
+
+        # **FIX:** Save the separated email lists to the database.
         cleaned_data = {
             "name": item.get("title", ""),
-            "source_url": website_url, # This is the unique key for scraped data
-            "emails": ", ".join(contact_info.get("emails", [])),
+            "source_url": website_url,
+            "work_emails": ", ".join(work_emails),
+            "personal_emails": ", ".join(personal_emails),
             "phones": ", ".join(contact_info.get("phones", [])),
             "domain": website_url.split('/')[2] if website_url else None,
             "source": "Web Scraper",
             "created_at": dt.datetime.now(dt.timezone.utc)
         }
         save_to_cleaned_mongo(db, cleaned_data)
+
         rows_for_display.append({
             "company_name": item.get("title", ""), "website_url": website_url,
-            "emails": ", ".join(contact_info.get("emails", [])), "phones": ", ".join(contact_info.get("phones", [])),
+            "work_emails": ", ".join(work_emails),
+            "personal_emails": ", ".join(personal_emails),
+            "phones": ", ".join(contact_info.get("phones", []))
         })
     return pd.DataFrame(rows_for_display)
 
