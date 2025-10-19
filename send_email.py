@@ -43,15 +43,22 @@ def fetch_cleaned_contacts(db):
         return pd.DataFrame()
 
 # --- CALLBACKS FOR STATE MANAGEMENT ---
-def update_subject(index):
+def update_subject(index, email_id): # Added email_id to key to ensure uniqueness
     """Callback to update the subject in the session state."""
-    widget_key = f"subject_{index}"
-    st.session_state.edited_emails[index]['subject'] = st.session_state[widget_key]
+    # We need to find the correct email in the list by its stable 'id'
+    for i, email_draft in enumerate(st.session_state.edited_emails):
+        if email_draft['id'] == email_id:
+            widget_key = f"subject_{email_id}_{email_draft['regen_counter']}"
+            st.session_state.edited_emails[i]['subject'] = st.session_state[widget_key]
+            break
 
-def update_body(index):
+def update_body(index, email_id): # Added email_id to key
     """Callback to update the body in the session state."""
-    widget_key = f"body_{index}"
-    st.session_state.edited_emails[index]['body'] = st.session_state[widget_key]
+    for i, email_draft in enumerate(st.session_state.edited_emails):
+        if email_draft['id'] == email_id:
+            widget_key = f"body_{email_id}_{email_draft['regen_counter']}"
+            st.session_state.edited_emails[i]['body'] = st.session_state[widget_key]
+            break
 
 # ===============================
 # AI-POWERED LOGIC
@@ -149,8 +156,8 @@ def main():
     if 'filter_domain' not in st.session_state:
         st.session_state.filter_domain = None
 
-    client, db = get_db_connection()
-    if not client:
+    client_mongo, db = get_db_connection() # Renamed to avoid conflict with OpenAI client
+    if not client_mongo:
         return
 
     st.header("Step 1: Find Contacts with AI")
@@ -181,7 +188,7 @@ def main():
     st.header("Step 2: Select Contacts & Generate Drafts")
     
     contacts_df = fetch_cleaned_contacts(db)
-    client.close()
+    client_mongo.close() # Close MongoDB client
 
     if contacts_df.empty:
         st.info("No cleaned contacts found. Go to 'Collect Contacts' to add some.")
@@ -196,11 +203,18 @@ def main():
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
 
-    select_all = st.checkbox("Select All Contacts")
-    if select_all:
-        display_df['Select'] = True
+    # Ensure 'Select All' accurately reflects current state and selected rows
+    pre_selected_count = display_df['Select'].sum()
+    select_all_default = pre_selected_count == len(display_df) and len(display_df) > 0
 
-    editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}"
+    select_all = st.checkbox("Select All Contacts", value=select_all_default, key="select_all_checkbox")
+    if select_all and not select_all_default: # If 'Select All' is checked and not all were already selected
+        display_df['Select'] = True
+    elif not select_all and select_all_default: # If 'Select All' is unchecked but all were selected
+        display_df['Select'] = False
+
+
+    editor_key = f"data_editor_{st.session_state.filter_domain or 'all'}_{len(contacts_df)}" # Add length for robust key
     disabled_cols = list(display_df.columns.drop("Select"))
 
     edited_df = st.data_editor(
@@ -211,75 +225,86 @@ def main():
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
         st.session_state.edited_emails = []
-        with st.spinner("Generating drafts..."):
-            for i, row in selected_rows.iterrows():
-                
-                # --- CORRECTED & ROBUST email selection logic ---
-                to_email = None
-                
-                # Safely get the work email value
-                work_email_val = row.get('work_emails')
-                # Check if it's a valid, non-empty string
-                if isinstance(work_email_val, str) and work_email_val.strip():
-                    to_email = work_email_val.split(',')[0].strip() # Take the first email if multiple exist
+        for i, row in selected_rows.iterrows():
+            
+            # --- CORRECTED & ROBUST email selection logic ---
+            to_email = None
+            
+            # Safely get the work email value
+            work_email_val = row.get('work_emails')
+            # Check if it's a valid, non-empty string
+            if isinstance(work_email_val, str) and work_email_val.strip():
+                to_email = work_email_val.split(',')[0].strip() # Take the first email if multiple exist
 
-                # If no valid work email was found, try the personal email
-                if not to_email:
-                    personal_email_val = row.get('personal_emails')
-                    if isinstance(personal_email_val, str) and personal_email_val.strip():
-                        to_email = personal_email_val.split(',')[0].strip()
+            # If no valid work email was found, try the personal email
+            if not to_email:
+                personal_email_val = row.get('personal_emails')
+                if isinstance(personal_email_val, str) and personal_email_val.strip():
+                    to_email = personal_email_val.split(',')[0].strip()
 
-                # If still no email after checking both, skip this contact and warn the user
-                if not to_email:
-                    st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
-                    continue
-                # --- END OF CORRECTION ---
+            # If still no email after checking both, skip this contact and warn the user
+            if not to_email:
+                st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown Contact')}' because no valid email was found.")
+                continue
+            # --- END OF CORRECTION ---
 
+            with st.spinner(f"Generating draft for {row['name']}..."):
                 body = generate_personalized_email_body(row)
-                st.session_state.edited_emails.append({
-                    "id": i, "name": row['name'], "to_email": to_email,
-                    "subject": "Connecting from Morphius AI", "body": body,
-                    "contact_details": row.to_dict()
-                })
+            st.session_state.edited_emails.append({
+                "id": i, "name": row['name'], "to_email": to_email,
+                "subject": "Connecting from Morphius AI", "body": body,
+                "contact_details": row.to_dict(),
+                "regen_counter": 0 # Initialize a counter for dynamic keys
+            })
+        st.rerun() # Rerun to display the newly generated drafts immediately
 
     if st.session_state.edited_emails:
         st.header("Step 3: Review and Edit Drafts")
         st.info("Edit the drafts directly, use 'Regenerate Body' for a new AI version, or 'Clear & Write Manually' to start from scratch.")
 
         for i, email_draft in enumerate(st.session_state.edited_emails):
+            # Use the 'id' from the contact_details (stable) and the regen_counter for dynamic keys
+            unique_id_for_keys = email_draft['id']
+            regen_count = email_draft['regen_counter']
+            
             with st.expander(f"Draft for: {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
                 
+                # Subject field - key depends on regen_counter to allow refresh
                 st.text_input(
                     "Subject",
                     value=email_draft['subject'],
-                    key=f"subject_{i}",
+                    key=f"subject_{unique_id_for_keys}_{regen_count}", # Dynamic key
                     on_change=update_subject,
-                    args=(i,)
+                    args=(i, unique_id_for_keys) # Pass unique_id_for_keys to callback
                 )
+                
+                # Body field - key depends on regen_counter to allow refresh
                 st.text_area(
                     "Body",
                     value=email_draft['body'],
                     height=250,
-                    key=f"body_{i}",
+                    key=f"body_{unique_id_for_keys}_{regen_count}", # Dynamic key
                     on_change=update_body,
-                    args=(i,)
+                    args=(i, unique_id_for_keys) # Pass unique_id_for_keys to callback
                 )
 
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
-                    if st.button("🔄 Regenerate Body", key=f"regen_{i}", use_container_width=True):
+                    if st.button("🔄 Regenerate Body", key=f"regen_{unique_id_for_keys}_{regen_count}", use_container_width=True):
                         with st.spinner("Asking AI for a new version..."):
                             new_body = generate_personalized_email_body(email_draft['contact_details'])
                             st.session_state.edited_emails[i]['body'] = new_body
+                            st.session_state.edited_emails[i]['regen_counter'] += 1 # Increment counter
                             st.toast(f"Generated a new draft for {email_draft['name']}!")
-                        st.rerun()
+                        st.rerun() # Rerun to update the text_area with the new body via new key
 
                 with b_col2:
-                    if st.button("✍ Clear & Write Manually", key=f"clear_{i}", use_container_width=True):
+                    if st.button("✍ Clear & Write Manually", key=f"clear_{unique_id_for_keys}_{regen_count}", use_container_width=True):
                         manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
                         st.session_state.edited_emails[i]['body'] = manual_template
+                        st.session_state.edited_emails[i]['regen_counter'] += 1 # Increment counter
                         st.toast(f"Cleared draft for {email_draft['name']}. You can now write manually.")
-                        st.rerun()
+                        st.rerun() # Rerun to update the text_area with the cleared body via new key
 
         st.markdown("### 📥 Download All Drafts")
         if st.session_state.edited_emails:
