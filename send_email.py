@@ -7,6 +7,7 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from urllib.parse import quote
+import yagmail  # For sending HTML emails
 
 # ===============================
 # LOAD CONFIG
@@ -15,6 +16,9 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client_ai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+GMAIL_USER = os.getenv("GMAIL_USER")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 # ===============================
 # HELPERS & CALLBACKS
@@ -116,9 +120,10 @@ def generate_personalized_email_body(contact_details):
         return get_fallback_template(domain, name)
 
 # ===============================
-# HTML EMAIL FORMATTING
+# HTML EMAIL FORMATTING & SENDING
 # ===============================
 def wrap_body_in_html(to_email, body_text):
+    """Wraps plain text in HTML and adds unsubscribe link for actual email."""
     paragraphs = body_text.split("\n\n")
     html_paragraphs = "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
     
@@ -135,7 +140,6 @@ def wrap_body_in_html(to_email, body_text):
         f"📅 Book a quick 15-min call</a></p>"
     )
     
-    # Encode email for URL
     encoded_email = quote(to_email)
     footer_html = (
         f'<p><small>Best regards,<br>'
@@ -146,11 +150,21 @@ def wrap_body_in_html(to_email, body_text):
     
     return f"<html><body>{html_paragraphs}{features_html}{cta_html}{footer_html}</body></html>"
 
+def send_email_html(to_email, subject, body_text, name):
+    try:
+        html_content = wrap_body_in_html(to_email, body_text)
+        yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
+        yag.send(to=to_email, subject=subject, contents=html_content)
+        return True
+    except Exception as e:
+        st.error(f"⚠ Failed to send email: {e}")
+        return False
+
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Morphius AI: Generate & Edit Email Drafts (Unsubscribe in Email Footer)")
+    st.title("📧 Morphius AI: Generate & Edit Email Drafts")
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
@@ -218,7 +232,7 @@ def main():
             if not to_email:
                 st.warning(f"⚠️ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
                 continue
-            body = generate_personalized_email_body(row)
+            body = generate_personalized_email_body(row)  # plain text for editing
             st.session_state.edited_emails.append({
                 "id": i, "name": row['name'], "to_email": to_email,
                 "subject": "Connecting from Morphius AI", "body": body,
