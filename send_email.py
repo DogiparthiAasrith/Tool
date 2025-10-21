@@ -123,7 +123,7 @@ def generate_personalized_email_body(contact_details):
 # HTML EMAIL FORMATTING & SENDING
 # ===============================
 def wrap_body_in_html(to_email, body_text):
-    """Wraps plain text in HTML and adds unsubscribe link for actual email."""
+    """Wraps plain text in HTML and adds unsubscribe & help links."""
     paragraphs = body_text.split("\n\n")
     html_paragraphs = "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
     
@@ -145,7 +145,9 @@ def wrap_body_in_html(to_email, body_text):
         f'<p><small>Best regards,<br>'
         f'<strong>Morphius AI Team</strong><br>'
         f'<a href="https://www.morphius.in/">www.morphius.in</a><br>'
-        f'<a href="https://yourdomain.com/unsubscribe?email={encoded_email}">Unsubscribe</a> if you prefer not to receive future emails.</small></p>'
+        f'To unsubscribe from future emails, click here: '
+        f'<a href="https://yourdomain.com/unsubscribe?email={encoded_email}">Unsubscribe</a><br>'
+        f'Need help? Visit: <a href="https://yourdomain.com/help">Help Center</a></small></p>'
     )
     
     return f"<html><body>{html_paragraphs}{features_html}{cta_html}{footer_html}</body></html>"
