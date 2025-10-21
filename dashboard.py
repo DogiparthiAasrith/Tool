@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import time
 import datetime
+from datetime import datetime
 import os
 from dotenv import load_dotenv
 
@@ -164,3 +165,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
