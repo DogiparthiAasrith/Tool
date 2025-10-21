@@ -6,7 +6,6 @@ from io import StringIO
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
-import yagmail  # For sending HTML emails
 
 # ===============================
 # LOAD CONFIG
@@ -15,9 +14,6 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client_ai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-GMAIL_USER = os.getenv("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 # ===============================
 # HELPERS & CALLBACKS
@@ -119,48 +115,28 @@ def generate_personalized_email_body(contact_details):
         return get_fallback_template(domain, name)
 
 # ===============================
-# HTML EMAIL FORMATTING & SENDING
+# UNSUBSCRIBE LOGIC
 # ===============================
-def wrap_body_in_html(name, body_text):
-    paragraphs = body_text.split("\n\n")
-    html_paragraphs = "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
-    
-    features_html = (
-        "<ul>"
-        "<li>Workflow automation</li>"
-        "<li>AI chatbots</li>"
-        "<li>Analytics dashboards</li>"
-        "</ul>"
-    )
-    
-    cta_html = (
-        f'<p><a href="https://calendly.com/morphius-ai/intro" target="_blank">'
-        f"📅 Book a quick 15-min call</a></p>"
-    )
-    footer_html = (
-        f'<p><small>Best regards,<br>'
-        f'<strong>Morphius AI Team</strong><br>'
-        f'<a href="https://www.morphius.in/">www.morphius.in</a><br>'
-        f'<a href="#">Unsubscribe</a> if you prefer not to receive future emails.</small></p>'
-    )
-    
-    return f"<html><body>{html_paragraphs}{features_html}{cta_html}{footer_html}</body></html>"
-
-def send_email_html(to_email, subject, body_text, name):
-    try:
-        html_content = wrap_body_in_html(name, body_text)
-        yag = yagmail.SMTP(GMAIL_USER, GMAIL_APP_PASSWORD)
-        yag.send(to=to_email, subject=subject, contents=html_content)
-        return True
-    except Exception as e:
-        st.error(f"⚠ Failed to send email: {e}")
-        return False
+def unsubscribe_contact(email):
+    client, db = get_db_connection()
+    if client:
+        try:
+            result = db.cleaned_contacts.update_one(
+                {"$or": [{"work_emails": {"$regex": email}}, {"personal_emails": {"$regex": email}}]},
+                {"$set": {"unsubscribed": True}}
+            )
+            client.close()
+            return result.modified_count > 0
+        except Exception as e:
+            st.error(f"⚠ Error unsubscribing: {e}")
+            return False
+    return False
 
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Morphius AI: Generate, Edit & Send Emails")
+    st.title("📧 Morphius AI: Generate & Edit Email Drafts (Unsubscribe Enabled)")
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
@@ -238,7 +214,7 @@ def main():
         st.rerun()
 
     if st.session_state.edited_emails:
-        st.header("Step 3: Review, Edit & Send Drafts")
+        st.header("Step 3: Review, Edit & Unsubscribe")
         for i, email_draft in enumerate(st.session_state.edited_emails):
             unique_id = email_draft['id']
             regen_count = email_draft['regen_counter']
@@ -264,10 +240,12 @@ def main():
                         st.toast(f"Cleared draft for {email_draft['name']}.")
                         st.rerun()
                 with b_col3:
-                    if st.button("📤 Send Email", key=f"send_{unique_id}_{regen_count}"):
-                        success = send_email_html(email_draft['to_email'], email_draft['subject'], email_draft['body'], email_draft['name'])
+                    if st.button("❌ Unsubscribe", key=f"unsubscribe_{unique_id}_{regen_count}"):
+                        success = unsubscribe_contact(email_draft['to_email'])
                         if success:
-                            st.success(f"✅ HTML email sent to {email_draft['name']} ({email_draft['to_email']})!")
+                            st.success(f"{email_draft['name']} ({email_draft['to_email']}) has been unsubscribed.")
+                        else:
+                            st.warning(f"Could not unsubscribe {email_draft['name']} ({email_draft['to_email']}).")
 
         st.markdown("### 📥 Download All Drafts")
         df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
@@ -277,4 +255,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
