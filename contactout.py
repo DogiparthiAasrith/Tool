@@ -226,7 +226,8 @@ def main():
                     payload = {"company_domain": domain, "include": include_fields}
                     process_enrichment(payload)
 
-    st.markdown("<br><br><center>💙 Built with Streamlit + MongoDB</center>", unsafe_allow_html=True)
+    
 
 if __name__ == '__main__':
     main()
+
