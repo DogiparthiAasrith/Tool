@@ -160,7 +160,7 @@ def send_email_html(to_email, subject, body_text, name):
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Morphius AI: Generate, Edit & Send HTML Emails")
+    st.title("📧 Morphius AI: Generate, Edit & Send Emails")
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
@@ -277,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
