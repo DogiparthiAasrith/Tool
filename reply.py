@@ -168,28 +168,19 @@ def mark_as_read(mail_id):
 def process_follow_ups(db):
     """Sends a follow-up to contacts who haven't replied to the last outreach email."""
     waiting_period = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2)
-    
-    # Create an exclusion list of anyone who has ever replied.
     replied_emails = db.email_logs.distinct("recipient_email", {"event_type": {"$regex": "^replied"}})
 
     pipeline = [
-        # 1. Consider only outreach emails.
         {'$match': {'event_type': {'$in': ['initial_outreach', 'follow_up_sent']}}},
-        # 2. Sort by date to reliably find the most recent one.
         {'$sort': {'timestamp': 1}},
-        # 3. Group by recipient to get their latest outreach details.
         {'$group': {
             '_id': '$recipient_email',
             'last_contact_time': {'$last': '$timestamp'},
             'outreach_count': {'$sum': 1}
         }},
-        # 4. Apply the rules to the grouped data.
         {'$match': {
-            # Rule A: Must not have replied.
             '_id': {'$nin': replied_emails},
-            # Rule B: The last outreach must be older than our waiting period.
             'last_contact_time': {'$lt': waiting_period},
-            # Rule C: Safety limit - stop after 2 follow-ups (1 initial + 2 follow-ups = 3 total).
             'outreach_count': {'$lt': 3}
         }}
     ]
@@ -294,11 +285,10 @@ def main():
                 st.write("No contacts met the criteria for unsubscribing.")
             
             st.success("✅ All automated tasks complete.")
-            
+            st.markdown("---")
+            st.info("Efficient. Smart. Automated — Powered by Morphius AI")
 
     client.close()
 
 if __name__ == "__main__":
     main()
-
-
