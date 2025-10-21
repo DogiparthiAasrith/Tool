@@ -295,9 +295,9 @@ def main():
             
             st.success("✅ All automated tasks complete.")
             st.markdown("---")
-            st.info("Efficient. Smart. Automated — Powered by Morphius AI")
 
     client.close()
 
 if __name__ == "__main__":
     main()
+
