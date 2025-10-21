@@ -185,7 +185,18 @@ def process_follow_ups(db):
         }}
     ]
     
+    # --- START OF DEBUGGING BLOCK ---
+    print("\n--- DEBUG INFO FOR FOLLOW-UPS ---")
+    print(f"Current UTC time: {datetime.datetime.now(datetime.timezone.utc)}")
+    print(f"Waiting period threshold (must be older than): {waiting_period}")
+    print(f"Excluding replied emails: {replied_emails}")
+    
     candidates = list(db.email_logs.aggregate(pipeline))
+    
+    print(f"CANDIDATES FOUND BY DATABASE QUERY: {candidates}")
+    print("--- END OF DEBUG INFO ---\n")
+    # --- END OF DEBUGGING BLOCK ---
+
     if not candidates:
         return 0
 
@@ -286,9 +297,9 @@ def main():
             
             st.success("✅ All automated tasks complete.")
             st.markdown("---")
+            st.info("Efficient. Smart. Automated — Powered by Morphius AI")
 
     client.close()
 
 if __name__ == "__main__":
     main()
-
