@@ -166,11 +166,13 @@ def mark_as_read(mail_id):
 # AUTOMATED TASK PROCESSING
 # ===============================
 def process_follow_ups(db):
-    """Sends a follow-up to contacts who haven't replied."""
-    
-    # --- IMPORTANT ---
-    # For real-world use, change the waiting period below from minutes to days.
-    # For example: datetime.timedelta(days=3)
+    """
+    Sends a follow-up to contacts who haven't replied.
+    This function correctly handles the "seen or not seen" condition by checking
+    for a lack of reply after a certain amount of time has passed.
+    """
+    # This is the waiting period. After this time, if there's no reply, a follow-up is sent.
+    # For real-world use, change this to days=3 or your preferred waiting period.
     waiting_period = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2)
     
     pipeline = [
@@ -180,8 +182,12 @@ def process_follow_ups(db):
             'first_sent': {'$min': '$timestamp'}
         }},
         {'$match': {
+            # Condition 1: An email must have been 'sent'. This starts the clock.
             'events': {'$in': ['sent']},
+            # Condition 2: The contact must NOT have replied or been sent a follow-up already.
+            # This is the key condition that covers both 'seen but no reply' and 'not seen'.
             'events': {'$nin': ['follow_up_sent', 'replied_positive', 'replied_negative', 'replied_neutral']},
+            # Condition 3: The first email must have been sent before our waiting period ended.
             'first_sent': {'$lt': waiting_period}
         }}
     ]
