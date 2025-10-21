@@ -21,7 +21,6 @@ MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 # ===============================
 # DATABASE FUNCTIONS
 # ===============================
-# Use Streamlit's resource caching to initialize the client once
 @st.cache_resource
 def init_connection():
     """Initializes and returns a MongoDB client."""
@@ -33,7 +32,6 @@ def init_connection():
         st.error(f"❌ **Database Connection Error:** {e}")
         return None
 
-# Use data caching for fetching data, with the client as an argument
 @st.cache_data(ttl=10)
 def load_data(_client):
     """Loads email log data from the MongoDB database."""
@@ -70,8 +68,9 @@ def main():
         st.rerun()
         return
 
-    # --- Pre-calculate all key metrics ---
-    total_sent = df[df['event_type'] == 'sent'].shape[0]
+    # --- Pre-calculate all key metrics with corrected event type ---
+    # --- CRITICAL FIX ---
+    total_sent = df[df['event_type'] == 'initial_outreach'].shape[0]
     total_replies = df[df['event_type'].str.startswith('replied_', na=False)].shape[0]
     total_follow_ups = df[df['event_type'] == 'follow_up_sent'].shape[0]
     
@@ -109,7 +108,7 @@ def main():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric(label="📤 Emails Sent", value=total_sent)
+            st.metric(label="📤 Initial Emails Sent", value=total_sent) # Label updated for clarity
             st.metric(label="↪️ Follow-ups Sent", value=total_follow_ups)
         with col2:
             st.metric(label="📥 Replies Received", value=total_replies)
