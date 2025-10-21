@@ -294,10 +294,11 @@ def main():
                 st.write("No contacts met the criteria for unsubscribing.")
             
             st.success("✅ All automated tasks complete.")
-            st.markdown("---")
+            
 
     client.close()
 
 if __name__ == "__main__":
     main()
+
 
