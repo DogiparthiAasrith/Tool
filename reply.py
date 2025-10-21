@@ -11,6 +11,7 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import uuid # For generating unique Message-IDs
 
 # Load environment variables from .env file
 load_dotenv()
@@ -85,7 +86,6 @@ def get_db_connection():
     """Establishes a connection to MongoDB."""
     try:
         client = MongoClient(MONGO_URI)
-        # The ismaster command is cheap and does not require auth.
         client.admin.command('ismaster')
         db = client[MONGO_DB_NAME]
         return client, db
@@ -99,21 +99,18 @@ def get_db_connection():
 def setup_database_indexes(db):
     """Ensures all required unique indexes exist for efficient querying and data integrity."""
     try:
-        # Unique index to prevent duplicate unsubscribe entries
         db.unsubscribe_list.create_index("email", unique=True)
-        # Compound index for efficient querying of email logs by recipient and timestamp
         db.email_logs.create_index([("recipient_email", 1), ("timestamp", -1)])
-        # Index for filtering by event type
         db.email_logs.create_index("event_type")
-        # Index for tracking original message ID for better threading
-        db.email_logs.create_index("original_mail_id")
+        db.email_logs.create_index("outbound_message_id") # New index for tracking outbound emails
         st.sidebar.success("Database indexes checked/created.")
     except OperationFailure as e:
         st.error(f"❌ Failed to set up database indexes: {e}. This might indicate a permission issue or a pre-existing index conflict.")
     except Exception as e:
         st.error(f"❌ An unexpected error occurred during index setup: {e}")
 
-def log_event_to_db(db, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None, original_mail_id=None):
+def log_event_to_db(db, event_type, email_addr, subject, status=None, interest_level=None, 
+                    incoming_mail_id=None, body=None, outbound_message_id=None, refers_to_message_id=None):
     """Logs an event to the email_logs collection in MongoDB."""
     try:
         log_entry = {
@@ -123,8 +120,9 @@ def log_event_to_db(db, event_type, email_addr, subject, status=None, interest_l
             "subject": subject,
             "status": status,
             "interest_level": interest_level,
-            "mail_id": mail_id, # ID of the incoming email (if any)
-            "original_mail_id": original_mail_id, # ID of the outbound email in a thread
+            "incoming_mail_id": incoming_mail_id, # ID of the incoming email (if this is a reply)
+            "outbound_message_id": outbound_message_id, # Message-ID of the email we sent (if any)
+            "refers_to_message_id": refers_to_message_id, # Message-ID of the email this one is replying/following up to
             "body": body
         }
         db.email_logs.insert_one(log_entry)
@@ -206,7 +204,7 @@ def get_unread_emails():
                 _, msg_data = mail.fetch(e_id, '(RFC822)')
                 msg = email.message_from_bytes(msg_data[0][1])
                 from_addr_tuple = email.utils.parseaddr(msg["From"])
-                from_addr = from_addr_tuple[1] if from_addr_tuple[1] else from_addr_tuple[0] # Use name if no email found
+                from_addr = from_addr_tuple[1] if from_addr_tuple[1] else from_addr_tuple[0]
                 subject = msg["Subject"] if msg["Subject"] else "No Subject"
                 
                 body = ""
@@ -229,22 +227,75 @@ def get_unread_emails():
                 emails.append({"from": from_addr, "subject": subject, "body": body, "id": e_id.decode()})
             except Exception as e:
                 st.warning(f"Could not process email ID {e_id}: {e}")
-                # Optionally mark this problematic email as read to avoid re-processing
-                # mail.store(e_id, '+FLAGS', '\\Seen')
         mail.logout()
         return emails
     except Exception as e:
         st.error(f"❌ Failed to fetch emails. Please check IMAP_SERVER, IMAP_PORT, SENDER_EMAIL, SENDER_PASSWORD in .env. Details: {e}")
         return []
 
-def send_reply(db, to_email, original_subject, interest_level, incoming_mail_id, is_follow_up=False, follow_up_count=0):
-    """Sends a reply based on the classified interest level or a follow-up."""
+def send_email_with_threading_info(db, to_email, subject, body_text, event_type, interest_level=None, 
+                                   incoming_mail_id=None, refers_to_message_id=None):
+    """Generic function to send an email, handling threading headers and logging."""
+    msg = MIMEMultipart()
+    msg["From"] = EMAIL
+    msg["To"] = to_email
+    msg["Subject"] = subject
     
-    if is_follow_up:
-        subject = f"Re: {original_subject} (Follow-up {follow_up_count+1})" if follow_up_count > 0 else f"Re: {original_subject} (Quick Follow-up)"
-        body_text = f"Hi,\n\nJust wanted to quickly follow up on my previous email. If it's not the right time, no worries.\n\nWe also have other services you might find interesting: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
-        event_type = "follow_up_sent"
-    elif interest_level == "positive":
+    # Generate a unique Message-ID for this outbound email
+    message_id = f"<{uuid.uuid4()}@{IMAP_SERVER.split('.')[0]}.com>" # Example: <uuid@imap.gmail.com> becomes <uuid@gmail.com>
+    msg["Message-ID"] = message_id
+
+    # Add In-Reply-To and References headers for threading
+    if incoming_mail_id: # This is a direct reply to an incoming email
+        msg["In-Reply-To"] = f"<{incoming_mail_id}@{IMAP_SERVER.split('.')[0]}.com>"
+        msg["References"] = f"<{incoming_mail_id}@{IMAP_SERVER.split('.')[0]}.com>"
+    elif refers_to_message_id: # This is a follow-up to a previous outbound email
+        msg["In-Reply-To"] = refers_to_message_id
+        msg["References"] = refers_to_message_id # Can extend References chain if needed
+
+    msg.attach(MIMEText(body_text, "plain"))
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(EMAIL, PASSWORD)
+            server.sendmail(EMAIL, to_email, msg.as_string())
+        
+        st.success(f"✅ Sent '{event_type.replace('_',' ')}' to {to_email}")
+        log_event_to_db(db, event_type, to_email, subject, "success", interest_level, 
+                         incoming_mail_id, body_text, outbound_message_id=message_id, 
+                         refers_to_message_id=refers_to_message_id if refers_to_message_id else incoming_mail_id)
+        
+        if incoming_mail_id:
+             mark_as_read(incoming_mail_id)
+        return True
+    except smtplib.SMTPAuthenticationError:
+        st.error(f"❌ Failed to send email to {to_email}: Authentication error. Please check SENDER_EMAIL and SENDER_PASSWORD in .env. If using Gmail/Outlook, an App Password might be required.")
+        log_event_to_db(db, event_type, to_email, subject, "failed", interest_level, 
+                         incoming_mail_id, body_text, outbound_message_id=message_id,
+                         refers_to_message_id=refers_to_message_id if refers_to_message_id else incoming_mail_id)
+        return False
+    except Exception as e:
+        st.error(f"❌ Failed to send {event_type.replace('_',' ')} to {to_email}: {e}")
+        log_event_to_db(db, event_type, to_email, subject, "failed", interest_level, 
+                         incoming_mail_id, body_text, outbound_message_id=message_id,
+                         refers_to_message_id=refers_to_message_id if refers_to_message_id else incoming_mail_id)
+        return False
+
+def initial_outreach_email(db, to_email, subject, body_text):
+    """Sends the first email in an outreach sequence."""
+    st.info(f"Initiating outreach to {to_email} with subject: {subject}")
+    return send_email_with_threading_info(db, to_email, subject, body_text, "sent")
+
+def send_follow_up_email(db, to_email, original_subject, follow_up_count, refers_to_message_id):
+    """Sends a follow-up email."""
+    subject = f"Re: {original_subject} (Follow-up {follow_up_count + 1})" if follow_up_count > 0 else f"Re: {original_subject} (Quick Follow-up)"
+    body_text = f"Hi,\n\nJust wanted to quickly follow up on my previous email. If it's not the right time, no worries.\n\nWe also have other services you might find interesting: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
+    return send_email_with_threading_info(db, to_email, subject, body_text, "follow_up_sent", refers_to_message_id=refers_to_message_id)
+
+def send_auto_reply(db, to_email, original_subject, interest_level, incoming_mail_id):
+    """Sends an automated reply to an incoming email based on interest level."""
+    if interest_level == "positive":
         subject = f"Re: {original_subject}"
         body_text = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {SCHEDULING_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
         event_type = "replied_positive"
@@ -253,40 +304,11 @@ def send_reply(db, to_email, original_subject, interest_level, incoming_mail_id,
         body_text = f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services which you can explore here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
         event_type = f"replied_{interest_level}"
     else:
-        st.warning(f"Attempted to send a reply for unknown interest level: {interest_level} to {to_email}. Skipping.")
+        st.warning(f"Attempted to send an auto-reply for unknown interest level: {interest_level} to {to_email}. Skipping.")
         return False
+    
+    return send_email_with_threading_info(db, to_email, subject, body_text, event_type, interest_level=interest_level, incoming_mail_id=incoming_mail_id)
 
-    msg = MIMEMultipart()
-    msg["From"] = EMAIL
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    # Add In-Reply-To and References headers for better threading, if an incoming mail ID is provided
-    if incoming_mail_id:
-        msg["In-Reply-To"] = f"<{incoming_mail_id}@{IMAP_SERVER}>" # Assuming IMAP_SERVER as part of Message-ID
-        msg["References"] = f"<{incoming_mail_id}@{IMAP_SERVER}>"
-
-    msg.attach(MIMEText(body_text, "plain"))
-
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls() # Secure the connection
-            server.login(EMAIL, PASSWORD)
-            server.sendmail(EMAIL, to_email, msg.as_string())
-        
-        st.success(f"✅ Sent '{event_type.replace('_',' ')}' to {to_email}")
-        log_event_to_db(db, event_type, to_email, subject, "success", interest_level if not is_follow_up else None, incoming_mail_id, body_text, original_mail_id=msg["Message-ID"])
-        
-        if incoming_mail_id: # Only mark as read if it's a direct reply we just processed
-             mark_as_read(incoming_mail_id)
-        return True
-    except smtplib.SMTPAuthenticationError:
-        st.error(f"❌ Failed to send email to {to_email}: Authentication error. Please check SENDER_EMAIL and SENDER_PASSWORD in .env. If using Gmail/Outlook, an App Password might be required.")
-        log_event_to_db(db, event_type, to_email, subject, "failed", interest_level if not is_follow_up else None, incoming_mail_id, body_text, original_mail_id=msg["Message-ID"])
-        return False
-    except Exception as e:
-        st.error(f"❌ Failed to send {event_type.replace('_',' ')} to {to_email}: {e}")
-        log_event_to_db(db, event_type, to_email, subject, "failed", interest_level if not is_follow_up else None, incoming_mail_id, body_text, original_mail_id=msg["Message-ID"])
-        return False
 
 def mark_as_read(mail_id):
     """Marks an email as read in the IMAP inbox."""
@@ -296,7 +318,6 @@ def mark_as_read(mail_id):
         mail.select("inbox")
         mail.store(mail_id.encode(), '+FLAGS', '\\Seen')
         mail.logout()
-        # st.info(f"Marked email {mail_id} as read.") # Optional for debugging
     except Exception as e:
         st.warning(f"Could not mark email {mail_id} as read: {e}")
 
@@ -307,7 +328,6 @@ def process_follow_ups(db):
     """Sends follow-up emails to contacts who haven't replied, up to MAX_FOLLOW_UPS."""
     current_time_utc = datetime.datetime.now(datetime.timezone.utc)
     
-    # Aggregation pipeline to find candidates for follow-up
     pipeline = [
         {
             '$match': {
@@ -323,6 +343,7 @@ def process_follow_ups(db):
                 'latest_event_type': {'$first': '$event_type'},
                 'latest_timestamp': {'$first': '$timestamp'},
                 'subject': {'$first': '$subject'}, # The subject from the last email sent to them
+                'outbound_message_id': {'$first': '$outbound_message_id'}, # Message-ID of the last email we sent to them
                 'follow_up_count': {
                     '$sum': {
                         '$cond': [{'$eq': ['$event_type', 'follow_up_sent']}, 1, 0]
@@ -374,14 +395,13 @@ def process_follow_ups(db):
     for candidate in candidates:
         email_to_follow_up = candidate['_id']
         original_subject = candidate['subject'] 
+        refers_to_message_id = candidate['outbound_message_id'] # Use the Message-ID of the email we sent
 
         if email_to_follow_up in unsubscribed_emails:
-            # st.info(f"Skipping follow-up for {email_to_follow_up}: already unsubscribed.")
             continue
         
-        # Ensure we don't accidentally send a 6th follow-up if MAX_FOLLOW_UPS is 5
         if candidate['follow_up_count'] < MAX_FOLLOW_UPS:
-            if send_reply(db, email_to_follow_up, original_subject, None, None, is_follow_up=True, follow_up_count=candidate['follow_up_count']):
+            if send_follow_up_email(db, email_to_follow_up, original_subject, candidate['follow_up_count'], refers_to_message_id):
                 actions_taken += 1
     return actions_taken
 
@@ -402,11 +422,16 @@ def process_unsubscribes(db):
                         '$cond': [{'$eq': ['$event_type', 'follow_up_sent']}, 1, 0]
                     }
                 },
-                'latest_timestamp': {'$max': '$timestamp'} # To get the last interaction time
+                'initial_sent_count': { # Count initial 'sent' emails
+                    '$sum': {
+                        '$cond': [{'$eq': ['$event_type', 'sent']}, 1, 0]
+                    }
+                },
+                'latest_timestamp': {'$max': '$timestamp'}
             }
         },
         {
-            '$lookup': { # Check for any replies from this recipient
+            '$lookup': {
                 'from': 'email_logs',
                 'localField': '_id',
                 'foreignField': 'recipient_email',
@@ -415,7 +440,7 @@ def process_unsubscribes(db):
         },
         {
             '$addFields': {
-                'has_replied': { # True if any 'replied_...' event exists
+                'has_replied': {
                     '$gt': [
                         {'$size': {
                             '$filter': {
@@ -425,13 +450,15 @@ def process_unsubscribes(db):
                             }
                         }}, 0
                     ]
-                }
+                },
+                'total_emails_sent': {'$add': ['$initial_sent_count', '$total_follow_ups_sent']} # Total outbound messages
             }
         },
         {
             '$match': {
-                'total_follow_ups_sent': MAX_FOLLOW_UPS, # Must have received max follow-ups
-                'has_replied': False # Must not have replied
+                'total_emails_sent': {'$gt': 0}, # Must have received at least one email
+                'has_replied': False, # Must not have replied
+                'total_follow_ups_sent': MAX_FOLLOW_UPS # Must have received max follow-ups
             }
         }
     ]
@@ -441,7 +468,7 @@ def process_unsubscribes(db):
     if not unresponsive_candidates:
         return 0
 
-    unsubscribed_emails = db.unsubscribe_list.distinct("email") # Get already unsubscribed emails
+    unsubscribed_emails = db.unsubscribe_list.distinct("email")
     actions_taken = 0
 
     for doc in unresponsive_candidates:
@@ -450,12 +477,12 @@ def process_unsubscribes(db):
             try:
                 db.unsubscribe_list.update_one(
                     {'email': email_addr},
-                    {'$setOnInsert': { # Only set these fields on insert
+                    {'$setOnInsert': {
                         'email': email_addr, 
                         'reason': f'No reply after {MAX_FOLLOW_UPS} follow-up emails', 
                         'created_at': datetime.datetime.now(datetime.timezone.utc)
                     }},
-                    upsert=True # Insert if not found, update if found (though 'email' is unique, so mostly insert)
+                    upsert=True
                 )
                 st.warning(f"🚫 Added {email_addr} to unsubscribe list (no reply after {MAX_FOLLOW_UPS} follow-ups).")
                 actions_taken += 1
@@ -486,6 +513,40 @@ def main():
     st.sidebar.markdown(f"**Scheduling Link:** [Link]({SCHEDULING_LINK})")
     st.sidebar.markdown(f"**Other Services Link:** [Link]({OTHER_SERVICES_LINK})")
 
+    st.header("✉️ Initiate New Outreach Campaign")
+    with st.form("initial_outreach_form"):
+        recipient_emails_input = st.text_area("Recipient Email(s) (comma or newline separated)", help="Enter one or more email addresses to start a new outreach sequence.")
+        initial_subject = st.text_input("Initial Email Subject", "Important Update Regarding Your Business")
+        initial_body = st.text_area("Initial Email Body", 
+                                   f"Hi,\n\nI hope this email finds you well.\n\nI wanted to reach out regarding [mention your service/value proposition here]. We help businesses like yours to [achieve a specific benefit].\n\nWould you be open to a quick chat to explore how we might be able to assist you? You can book a meeting with me directly here: {SCHEDULING_LINK}\n\nLooking forward to hearing from you.\n\nBest regards,\nAasrith",
+                                   height=200)
+        send_outreach_submitted = st.form_submit_button("Send Initial Outreach")
+
+        if send_outreach_submitted:
+            if not recipient_emails_input:
+                st.warning("Please enter at least one recipient email address.")
+            else:
+                emails_to_send = [e.strip() for e in recipient_emails_input.replace(',', '\n').split('\n') if e.strip()]
+                for email_addr in emails_to_send:
+                    # Check against unsubscribe list before sending initial outreach
+                    unsubscribed_check = db.unsubscribe_list.find_one({'email': email_addr})
+                    if unsubscribed_check:
+                        st.info(f"Recipient `{email_addr}` is on the unsubscribe list. Skipping initial outreach.")
+                        continue
+                    
+                    # Check if an initial email has already been sent to avoid duplicates
+                    existing_outreach = db.email_logs.find_one({
+                        'recipient_email': email_addr,
+                        'event_type': 'sent'
+                    })
+                    if existing_outreach:
+                        st.info(f"Initial outreach already sent to `{email_addr}`. Skipping.")
+                        continue
+
+                    initial_outreach_email(db, email_addr, initial_subject, initial_body)
+                st.success("Initial outreach emails have been queued/sent.")
+
+    st.markdown("---") # Separator
 
     if st.button("🚀 Run All Email Automations Now", help="Click to process new replies, send pending follow-ups, and update unsubscribe lists."):
         with st.spinner("Processing all automated tasks... This might take a moment."):
@@ -497,18 +558,17 @@ def main():
                 st.write(f"Found {len(unread_emails)} new email(s) in inbox.")
                 for mail in unread_emails:
                     st.markdown(f"--- Processing reply from: **`{mail['from']}`** (`{mail['subject']}`) ---")
-                    log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
+                    log_event_to_db(db, "received", mail["from"], mail["subject"], incoming_mail_id=mail["id"], body=mail["body"])
                     
-                    # Check against unsubscribe list before processing
                     unsubscribed_check = db.unsubscribe_list.find_one({'email': mail["from"]})
                     if unsubscribed_check:
                         st.info(f"Recipient `{mail['from']}` is on the unsubscribe list. No action taken.")
-                        mark_as_read(mail["id"]) # Still mark as read to clear inbox
+                        mark_as_read(mail["id"])
                         continue
 
                     interest = check_interest_with_openai(mail["body"])
                     st.write(f"-> Interest level for **`{mail['from']}`**: **`{interest.upper()}`**")
-                    send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
+                    send_auto_reply(db, mail["from"], mail["subject"], interest, mail["id"])
                 st.success("✅ Finished processing new replies.")
             else:
                 st.info("No new replies to process at this time.")
@@ -536,9 +596,7 @@ def main():
     recent_logs = list(db.email_logs.find().sort("timestamp", -1).limit(20)) # Display more logs
     if recent_logs:
         log_df = pd.DataFrame(recent_logs)
-        # Select and reorder columns for better readability
         display_columns = ['timestamp', 'event_type', 'recipient_email', 'subject', 'interest_level', 'status']
-        # Ensure all columns exist, fill missing with None or empty string
         for col in display_columns:
             if col not in log_df.columns:
                 log_df[col] = None
@@ -552,7 +610,6 @@ def main():
     unsubscribe_list = list(db.unsubscribe_list.find().sort("created_at", -1))
     if unsubscribe_list:
         unsubscribe_df = pd.DataFrame(unsubscribe_list)
-        # Select and reorder columns for better readability
         display_columns_unsubscribe = ['email', 'reason', 'created_at']
         for col in display_columns_unsubscribe:
             if col not in unsubscribe_df.columns:
