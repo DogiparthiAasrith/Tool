@@ -358,5 +358,6 @@ def main():
 
     client.close()
 
-if _name_ == "_main_":
+if __name_ == "__main__":
     main()
+
