@@ -152,7 +152,7 @@ def main():
         .stApp {
             background-color: #f0f2f6; /* Light gray background */
         }
-        .css-vk329t e16z3jvj2 { /* Header container */
+        .css-vk329t e16z3jvj2 { /* Header container - targeting a common Streamlit div for potential future use */
             background-color: #ffffff;
             padding: 20px;
             border-bottom: 1px solid #e0e0e0;
@@ -234,13 +234,7 @@ def main():
     query = st.text_input("What kind of businesses are you looking for?", placeholder="e.g., 'Tech startups in Silicon Valley', 'Cafes in London', 'Dentists in New York'")
     num_results = st.slider("Number of search results to process:", min_value=1, max_value=20, value=5)
 
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        search_button = st.button("🚀 Start Scraping", use_container_width=True)
-    with col2:
-        if st.button("Reset Session", use_container_width=True, type="secondary"):
-            st.session_state.clear()
-            st.experimental_rerun()
+    search_button = st.button("🚀 Start Scraping", use_container_width=True)
 
     st.markdown("---")
 
