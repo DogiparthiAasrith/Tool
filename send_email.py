@@ -6,6 +6,7 @@ from io import StringIO
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote
 
 # ===============================
 # LOAD CONFIG
@@ -115,28 +116,41 @@ def generate_personalized_email_body(contact_details):
         return get_fallback_template(domain, name)
 
 # ===============================
-# UNSUBSCRIBE LOGIC
+# HTML EMAIL FORMATTING
 # ===============================
-def unsubscribe_contact(email):
-    client, db = get_db_connection()
-    if client:
-        try:
-            result = db.cleaned_contacts.update_one(
-                {"$or": [{"work_emails": {"$regex": email}}, {"personal_emails": {"$regex": email}}]},
-                {"$set": {"unsubscribed": True}}
-            )
-            client.close()
-            return result.modified_count > 0
-        except Exception as e:
-            st.error(f"⚠ Error unsubscribing: {e}")
-            return False
-    return False
+def wrap_body_in_html(to_email, body_text):
+    paragraphs = body_text.split("\n\n")
+    html_paragraphs = "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
+    
+    features_html = (
+        "<ul>"
+        "<li>Workflow automation</li>"
+        "<li>AI chatbots</li>"
+        "<li>Analytics dashboards</li>"
+        "</ul>"
+    )
+    
+    cta_html = (
+        f'<p><a href="https://calendly.com/morphius-ai/intro" target="_blank">'
+        f"📅 Book a quick 15-min call</a></p>"
+    )
+    
+    # Encode email for URL
+    encoded_email = quote(to_email)
+    footer_html = (
+        f'<p><small>Best regards,<br>'
+        f'<strong>Morphius AI Team</strong><br>'
+        f'<a href="https://www.morphius.in/">www.morphius.in</a><br>'
+        f'<a href="https://yourdomain.com/unsubscribe?email={encoded_email}">Unsubscribe</a> if you prefer not to receive future emails.</small></p>'
+    )
+    
+    return f"<html><body>{html_paragraphs}{features_html}{cta_html}{footer_html}</body></html>"
 
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Morphius AI: Generate & Edit Email Drafts (Unsubscribe Enabled)")
+    st.title("📧 Morphius AI: Generate & Edit Email Drafts (Unsubscribe in Email Footer)")
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
@@ -214,7 +228,7 @@ def main():
         st.rerun()
 
     if st.session_state.edited_emails:
-        st.header("Step 3: Review, Edit & Unsubscribe")
+        st.header("Step 3: Review & Edit Drafts")
         for i, email_draft in enumerate(st.session_state.edited_emails):
             unique_id = email_draft['id']
             regen_count = email_draft['regen_counter']
@@ -224,7 +238,7 @@ def main():
                 st.text_area("Body", value=email_draft['body'], height=250,
                              key=f"body_{unique_id}_{regen_count}", on_change=update_body, args=(i, unique_id))
                 
-                b_col1, b_col2, b_col3 = st.columns(3)
+                b_col1, b_col2 = st.columns(2)
                 with b_col1:
                     if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}"):
                         new_body = generate_personalized_email_body(email_draft['contact_details'])
@@ -239,13 +253,6 @@ def main():
                         st.session_state.edited_emails[i]['regen_counter'] += 1
                         st.toast(f"Cleared draft for {email_draft['name']}.")
                         st.rerun()
-                with b_col3:
-                    if st.button("❌ Unsubscribe", key=f"unsubscribe_{unique_id}_{regen_count}"):
-                        success = unsubscribe_contact(email_draft['to_email'])
-                        if success:
-                            st.success(f"{email_draft['name']} ({email_draft['to_email']}) has been unsubscribed.")
-                        else:
-                            st.warning(f"Could not unsubscribe {email_draft['name']} ({email_draft['to_email']}).")
 
         st.markdown("### 📥 Download All Drafts")
         df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
