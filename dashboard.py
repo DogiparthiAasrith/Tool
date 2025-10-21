@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-import plotly.graph_objects as go
 import plotly.express as px
 import time
 import datetime
-from datetime import datetime
 import os
 from dotenv import load_dotenv
+from zoneinfo import ZoneInfo # For modern timezone handling
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,6 +17,7 @@ load_dotenv()
 # ===============================
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
+DISPLAY_TIMEZONE = "Asia/Kolkata" # Set the target timezone for display
 
 # ===============================
 # DATABASE FUNCTIONS
@@ -35,7 +35,7 @@ def init_connection():
 
 @st.cache_data(ttl=10)
 def load_data(_client):
-    """Loads email log data from the MongoDB database."""
+    """Loads email log data from MongoDB and converts timestamps to the local timezone."""
     if _client is None:
         return pd.DataFrame()
     try:
@@ -43,7 +43,11 @@ def load_data(_client):
         cursor = db.email_logs.find().sort('timestamp', -1)
         df = pd.DataFrame(list(cursor))
         if not df.empty and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # --- TIMEZONE FIX ---
+            # 1. Convert timestamp column to datetime objects.
+            # 2. Localize them to UTC (since MongoDB stores in UTC).
+            # 3. Convert them to the desired display timezone (e.g., IST).
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC').dt.tz_convert(DISPLAY_TIMEZONE)
         return df
     except Exception as e:
         st.warning(f"Could not load data. Error: {e}")
@@ -53,6 +57,7 @@ def load_data(_client):
 # MAIN STREAMLIT APP
 # ===============================
 def main():
+    st.set_page_config(page_title="Email Campaign Dashboard", page_icon="📊", layout="wide")
     st.title("📊 Email Campaign Dashboard")
 
     st.sidebar.title("⚙️ Settings")
@@ -69,8 +74,7 @@ def main():
         st.rerun()
         return
 
-    # --- Pre-calculate all key metrics with corrected event type ---
-    # --- CRITICAL FIX ---
+    # --- Pre-calculate all key metrics ---
     total_sent = df[df['event_type'] == 'initial_outreach'].shape[0]
     total_replies = df[df['event_type'].str.startswith('replied_', na=False)].shape[0]
     total_follow_ups = df[df['event_type'] == 'follow_up_sent'].shape[0]
@@ -79,8 +83,7 @@ def main():
     negative_replies = df[df['interest_level'] == 'negative'].shape[0]
     
     reply_rate = (total_replies / total_sent * 100) if total_sent > 0 else 0
-    positive_rate = (positive_replies / total_replies * 100) if total_replies > 0 else 0
-
+    
     tab1, tab2, tab3 = st.tabs(["📈 Campaign Funnel", "Key Metrics", "📜 Full Activity Log"])
 
     with tab1:
@@ -109,13 +112,13 @@ def main():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric(label="📤 Initial Emails Sent", value=total_sent) # Label updated for clarity
+            st.metric(label="📤 Initial Emails Sent", value=total_sent)
             st.metric(label="↪️ Follow-ups Sent", value=total_follow_ups)
         with col2:
             st.metric(label="📥 Replies Received", value=total_replies)
             st.metric(label="📈 Reply Rate", value=f"{reply_rate:.2f}%")
         with col3:
-            st.metric(label="👍 Positive Replies (Interested)", value=positive_replies)
+            st.metric(label="👍 Positive Replies", value=positive_replies)
             st.metric(label="👎 Negative Replies", value=negative_replies)
 
         st.divider()
@@ -156,13 +159,18 @@ def main():
             df_display = df.drop(columns=['_id'])
         else:
             df_display = df
+        
+        # Format the timestamp for display in the dataframe
+        df_display['timestamp'] = df_display['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
         st.dataframe(df_display, use_container_width=True)
 
-    last_updated_placeholder.text(f"Last updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # --- TIMEZONE FIX ---
+    # Get current UTC time and convert it to the display timezone
+    now_local = datetime.datetime.now(datetime.timezone.utc).astimezone(ZoneInfo(DISPLAY_TIMEZONE))
+    last_updated_placeholder.text(f"Last updated: {now_local.strftime('%Y-%m-%d %H:%M:%S')} ({DISPLAY_TIMEZONE})")
     
     time.sleep(auto_refresh_interval)
     st.rerun()
 
 if __name__ == "__main__":
     main()
-
