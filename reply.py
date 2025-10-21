@@ -50,9 +50,6 @@ def setup_database_indexes(db):
         # Crucial indexes for efficient follow-up and unsubscribe queries
         db.email_logs.create_index([("recipient_email", 1), ("timestamp", 1)])
         db.email_logs.create_index("event_type")
-        # Ensure event_type and recipient_email are indexed for distinct queries
-        db.email_logs.create_index("event_type")
-        db.email_logs.create_index("recipient_email")
     except OperationFailure as e:
         st.error(f"❌ Failed to set up database indexes: {e}")
 
@@ -179,10 +176,10 @@ def send_reply(db, to_email, original_subject, interest_level, mail_id):
 
 def mark_as_read(mail_id):
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT) # Added IMAP_PORT
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
-        mail.store(str(mail_id), '+FLAGS', '\\Seen'); mail.logout()
+        mail.store(str(mail_id), '+FLAGS', '\\Seen'); mail.logout() # Ensure mail_id is string
     except Exception as e:
         st.warning(f"Could not mark email {mail_id} as read: {e}")
 
@@ -190,52 +187,49 @@ def mark_as_read(mail_id):
 # AUTOMATED TASK PROCESSING
 # ===============================
 def process_follow_ups(db):
-    """
-    Sends a follow-up to contacts if:
-    - They haven't replied.
-    - Their last 'sent' or 'follow_up_sent' email was 2 minutes ago.
-    - They have received less than 5 follow-ups (meaning total emails sent < 6).
-    """
-    waiting_period_delta = datetime.timedelta(minutes=2)
+    """Sends a follow-up to contacts who haven't replied to any 'sent' or 'follow_up_sent' email
+    after a specified waiting period."""
+    # MODIFIED: Set to 2 minutes for testing
+    waiting_period_delta = datetime.timedelta(minutes=2) 
     current_time_utc = datetime.datetime.now(datetime.timezone.utc)
     
     # Get all emails that have received any kind of reply
     replied_emails = db.email_logs.distinct("recipient_email", {"event_type": {"$regex": "^replied"}})
-    
-    # Get all emails already on the unsubscribe list
-    already_unsubscribed = db.unsubscribe_list.distinct("email")
 
     actions_taken = 0
     
     # Aggregate to find the last relevant event for each email and filter
     pipeline = [
-        # Match only 'sent' (initial) or 'follow_up_sent' events
+        # Match only 'sent' or 'follow_up_sent' events
         {'$match': {'event_type': {'$in': ['sent', 'follow_up_sent']}}},
-        # Group by recipient_email to get the last relevant event and count total sent
+        # Group by recipient_email to get the last relevant event for each
         {'$group': {
             '_id': '$recipient_email',
-            'last_sent_timestamp': {'$last': '$timestamp'},
-            'total_sent_count': {'$sum': 1} # Counts initial email + follow-ups
+            'last_event_type': {'$last': '$event_type'},
+            'last_event_timestamp': {'$last': '$timestamp'},
+            'sent_count': {'$sum': 1} # Count total sent/follow-up emails
         }},
         # Filter out those who have replied
         {'$match': {'_id': {'$nin': replied_emails}}},
-        # Filter out those who are already unsubscribed
-        {'$match': {'_id': {'$nin': already_unsubscribed}}},
-        # Filter by time since last event (2 minutes)
-        {'$match': {'last_sent_timestamp': {'$lt': current_time_utc - waiting_period_delta}}},
-        # Ensure we don't send more than 5 follow-ups (total sent emails < 6)
-        {'$match': {'total_sent_count': {'$lt': 6}}} # 1 initial + 5 follow-ups = 6 emails max
+        # Filter by time since last event
+        {'$match': {'last_event_timestamp': {'$lt': current_time_utc - waiting_period_delta}}},
+        # Ensure we don't send endless follow-ups (e.g., max 2 follow-ups)
+        {'$match': {'sent_count': {'$lt': 3}}} # 1 initial + 2 follow-ups max = 3 interactions
     ]
     
     contacts_for_follow_up = list(db.email_logs.aggregate(pipeline))
 
+    unsubscribed_docs = db.unsubscribe_list.find({}, {'email': 1})
+    unsubscribed_emails = {doc['email'] for doc in unsubscribed_docs}
+
     for contact in contacts_for_follow_up:
         email_to_follow_up = contact['_id']
-        current_follow_up_num = contact['total_sent_count'] # If total_sent_count is 1, it's the 1st follow-up (after initial)
+        
+        if email_to_follow_up in unsubscribed_emails:
+            st.info(f"Skipping follow-up for {email_to_follow_up} (unsubscribed).")
+            continue
 
-        st.info(f"Preparing to send follow-up #{current_follow_up_num} to {email_to_follow_up}")
-
-        subject = f"Follow-Up {current_follow_up_num}"
+        subject = "Quick Follow-Up"
         body = f"Hi,\n\nJust wanted to quickly follow up on my previous email. If it's not the right time, no worries.\n\nWe also have other services you might find interesting: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
         
         msg = MIMEMultipart()
@@ -249,7 +243,7 @@ def process_follow_ups(db):
                 server.starttls()
                 server.login(EMAIL, PASSWORD)
                 server.sendmail(EMAIL, email_to_follow_up, msg.as_string())
-            st.success(f"✅ Follow-up #{current_follow_up_num} sent to {email_to_follow_up}")
+            st.success(f"✅ Follow-up sent to {email_to_follow_up}")
             log_event_to_db(db, "follow_up_sent", email_to_follow_up, subject, "success", body=body)
             actions_taken += 1
         except Exception as e:
@@ -258,13 +252,7 @@ def process_follow_ups(db):
     return actions_taken
 
 def process_unsubscribes(db):
-    """
-    Adds contacts to the unsubscribe list if:
-    - They haven't replied to any email.
-    - Exactly 5 follow-ups have been sent (meaning a total of 6 emails: 1 initial + 5 follow-ups).
-    - The last email (the 5th follow-up) was sent more than 2 minutes ago.
-    """
-    waiting_period_delta = datetime.timedelta(minutes=2)
+    """Adds contacts to the unsubscribe list if they haven't replied after 5 emails."""
     current_time_utc = datetime.datetime.now(datetime.timezone.utc)
 
     # Get all emails that have received any kind of reply
@@ -282,18 +270,18 @@ def process_unsubscribes(db):
         {'$group': {
             '_id': '$recipient_email',
             'total_sent_count': {'$sum': 1},
-            'latest_sent_timestamp': {'$max': '$timestamp'}
+            'latest_sent_timestamp': {'$max': '$timestamp'} # Track latest interaction
         }},
         # Filter:
-        # 1. Has sent exactly 6 emails (1 initial + 5 follow-ups)
-        # 2. Has NOT replied
+        # 1. Has sent 5 or more emails
+        # 2. Has NOT replied (checked against replied_emails list)
         # 3. Is NOT already unsubscribed
-        # 4. The latest email was sent more than 2 minutes ago
+        # MODIFIED: Set to 2 minutes for testing
         {'$match': {
-            'total_sent_count': {'$eq': 6}, # Exactly 1 initial + 5 follow-ups
+            'total_sent_count': {'$gte': 5},
             '_id': {'$nin': replied_emails},
             '_id': {'$nin': already_unsubscribed},
-            'latest_sent_timestamp': {'$lt': current_time_utc - waiting_period_delta}
+            'latest_sent_timestamp': {'$lt': current_time_utc - datetime.timedelta(minutes=2)} # 2 minutes for testing
         }}
     ]
     
@@ -306,7 +294,7 @@ def process_unsubscribes(db):
                 {'email': email_addr},
                 {'$setOnInsert': {
                     'email': email_addr,
-                    'reason': f'No reply after {contact["total_sent_count"]} emails (including initial and 5 follow-ups)',
+                    'reason': f'No reply after {contact["total_sent_count"]} emails',
                     'created_at': datetime.datetime.now(datetime.timezone.utc)
                 }},
                 upsert=True
@@ -317,103 +305,58 @@ def process_unsubscribes(db):
             st.error(f"Failed to add {email_addr} to unsubscribe list: {e}")
     return actions_taken
 
-# Helper function to simulate initial email sending for testing
-def send_initial_email(db, to_email, subject, body):
-    msg = MIMEMultipart()
-    msg["From"] = EMAIL
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL, PASSWORD)
-            server.sendmail(EMAIL, to_email, msg.as_string())
-        st.success(f"✅ Initial email sent to {to_email}")
-        log_event_to_db(db, "sent", to_email, subject, "success", body=body)
-    except Exception as e:
-        st.error(f"❌ Failed to send initial email to {to_email}: {e}")
-
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.set_page_config(layout="wide")
-    st.title("Automated Reply Handler & Follow-up System")
+    st.title("Automated Reply Handler")
     client, db = get_db_connection()
     if not client: return
     setup_database_indexes(db)
 
-    st.sidebar.header("Manual Testing (Development Only)")
-    with st.sidebar.expander("Send Initial Test Email"):
-        test_email_recipient = st.text_input("Recipient Email for Test Send", "test@example.com")
-        test_email_subject = st.text_input("Test Email Subject", "Your Business Proposal")
-        test_email_body = st.text_area("Test Email Body", "Hi, just reaching out about our services. Let me know if you're interested!")
-        if st.button("Send Initial Test Email"):
-            if test_email_recipient and test_email_subject and test_email_body:
-                send_initial_email(db, test_email_recipient, test_email_subject, test_email_body)
-            else:
-                st.warning("Please fill in all fields for the test email.")
+    # You will need to manually send initial emails for testing this system
+    # As there is no "send initial email" function or UI here.
+    # For example, use send_initial_email(db, "test@example.com", "My Offer", "Hi, check this out.")
+    # to log a "sent" event.
+    # If you need a function to send initial emails for testing, let me know.
 
-    st.header("Automated Tasks")
-    if st.button("Run All Automated Tasks Now"):
-        with st.spinner("Processing all tasks (checking replies, follow-ups, unsubscribes)..."):
+    if st.button("Check Emails & Run Automations"):
+        with st.spinner("Processing all tasks..."):
             
             # --- STEP 1: PROCESS NEW REPLIES ---
-            st.subheader("1. Checking for New Replies")
+            st.info("--- 1. Checking for new replies ---")
             unread_emails = get_unread_emails()
             if unread_emails:
                 st.write(f"Found {len(unread_emails)} new email(s).")
                 for mail in unread_emails:
-                    st.write(f"Processing reply from: *{mail['from']}* (Subject: {mail['subject']})")
+                    st.write(f"Processing reply from: {mail['from']}")
                     log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
-                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp; -> Classified interest: *{interest.upper()}*")
+                    st.write(f"-> Interest level: *{interest}*")
                     send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
                 st.success("✅ Finished processing new replies.")
             else:
-                st.info("No new replies to process.")
+                st.write("No new replies to process.")
             
-            # --- STEP 2: PROCESS FOLLOW-UPS ---
-            st.subheader("2. Checking for Pending Follow-ups")
+            # --- STEP 2: PROCESS FOLLOW-UPS (ALWAYS RUNS) ---
+            st.info("--- 2. Checking for pending follow-ups ---")
             follow_ups_sent = process_follow_ups(db)
             if follow_ups_sent > 0:
-                 st.success(f"✅ Sent {follow_ups_sent} follow-up email(s).")
+                 st.write(f"Sent {follow_ups_sent} follow-up email(s).")
             else:
-                st.info("No contacts currently need a follow-up.")
+                st.write("No contacts needed a follow-up.")
 
-            # --- STEP 3: PROCESS UNSUBSCRIBES ---
-            st.subheader("3. Checking for Unresponsive Contacts to Unsubscribe")
+            # --- STEP 3: PROCESS UNSUBSCRIBES (ALWAYS RUNS) ---
+            st.info("--- 3. Checking for unresponsive contacts ---")
             unsubscribes_processed = process_unsubscribes(db)
             if unsubscribes_processed > 0:
-                st.success(f"✅ Unsubscribed {unsubscribes_processed} contact(s) due to no reply after maximum follow-ups.")
+                st.write(f"Unsubscribed {unsubscribes_processed} contact(s) due to no reply.")
             else:
-                st.info("No contacts met the criteria for unsubscribing at this time.")
+                st.write("No contacts met the criteria for unsubscribing.")
             
-            st.success("✨ All automated tasks complete for this run.")
-
-    st.subheader("Database Overview (Recent Activity)")
-    
-    # Display recent email logs
-    st.markdown("### Recent Email Logs")
-    log_data = list(db.email_logs.find().sort("timestamp", -1).limit(20))
-    if log_data:
-        df_logs = pd.DataFrame(log_data)
-        st.dataframe(df_logs[['timestamp', 'event_type', 'recipient_email', 'subject', 'status', 'interest_level']])
-    else:
-        st.info("No email logs found yet.")
-
-    # Display unsubscribe list
-    st.markdown("### Unsubscribe List")
-    unsubscribe_data = list(db.unsubscribe_list.find().sort("created_at", -1))
-    if unsubscribe_data:
-        df_unsub = pd.DataFrame(unsubscribe_data)
-        st.dataframe(df_unsub[['created_at', 'email', 'reason']])
-    else:
-        st.info("Unsubscribe list is empty.")
+            st.success("✅ All automated tasks complete.")
 
     client.close()
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
