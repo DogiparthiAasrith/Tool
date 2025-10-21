@@ -300,7 +300,6 @@ def main():
             st.info("Database connection closed.")
 
     st.markdown("---")
-    st.markdown("<p style='text-align: center; color: #888;'>Powered by Streamlit, SerpAPI, and MongoDB</p>", unsafe_allow_html=True)
-
 if __name__ == '__main__':
     main()
+
