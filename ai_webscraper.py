@@ -299,7 +299,7 @@ def main():
             if client: client.close()
             st.info("Database connection closed.")
 
-    st.markdown("---")
 if __name__ == '__main__':
     main()
+
 
