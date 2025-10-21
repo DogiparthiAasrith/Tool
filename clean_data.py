@@ -99,20 +99,24 @@ def main():
             background-color: #ffffff;
             border-radius: 10px;
             box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
+            height: 110px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;   /* ✅ Centers content vertically */
+            align-items: center;       /* ✅ Centers content horizontally */
             padding: 10px 15px;
             margin-bottom: 15px;
             text-align: center;
-            height: 100px;
         }
         .metric-card h3 {
             font-size: 16px;
             color: #333333;
-            margin-bottom: 5px;
+            margin: 0;
         }
         .metric-card h2 {
             font-size: 22px;
             color: #1a73e8;
-            margin: 0;
+            margin-top: 5px;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -142,7 +146,7 @@ def main():
     if not cleaned_df.empty:
         csv_saved = save_df_to_csv(cleaned_df)
 
-        # ✅ FIX TIMEZONE (Set to India Time)
+        # ✅ FIX TIMEZONE (India Time)
         india_tz = pytz.timezone("Asia/Kolkata")
         local_time = datetime.now(india_tz).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -150,11 +154,26 @@ def main():
         st.markdown("### 📊 Data Summary")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"<div class='metric-card'><h3>👥 Total Contacts</h3><h2>{len(cleaned_df)}</h2></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>👥 Total Contacts</h3>
+                    <h2>{len(cleaned_df)}</h2>
+                </div>
+            """, unsafe_allow_html=True)
         with col2:
-            st.markdown(f"<div class='metric-card'><h3>🕒 Last Updated</h3><h2>{local_time}</h2></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>🕒 Last Updated</h3>
+                    <h2>{local_time}</h2>
+                </div>
+            """, unsafe_allow_html=True)
         with col3:
-            st.markdown(f"<div class='metric-card'><h3>🗂️ Columns</h3><h2>{len(cleaned_df.columns)}</h2></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <h3>🗂️ Columns</h3>
+                    <h2>{len(cleaned_df.columns)}</h2>
+                </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("### 📋 Contacts Data")
         st.dataframe(cleaned_df, use_container_width=True)
