@@ -5,6 +5,7 @@ from pymongo.errors import ConnectionFailure
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+import pytz
 
 # Load environment variables
 load_dotenv()
@@ -32,6 +33,7 @@ def get_db_connection():
         st.error(e)
         return None, None
 
+
 def fetch_cleaned_contacts(db):
     """Fetches records and ensures clean display with ordered columns."""
     try:
@@ -53,12 +55,14 @@ def fetch_cleaned_contacts(db):
         st.warning(f"⚠️ Could not fetch cleaned contacts. Error: {error}")
         return pd.DataFrame()
 
+
 def save_df_to_csv(df):
     """Saves the DataFrame to a CSV file for download."""
     if not df.empty:
         df.to_csv(CLEANED_CSV_PATH, index=False)
         return True
     return False
+
 
 # ===============================
 # STREAMLIT UI
@@ -74,7 +78,6 @@ def main():
     # --- CUSTOM CSS STYLING ---
     st.markdown("""
         <style>
-        /* Global Style */
         body {
             background-color: #f8f9fb;
             font-family: 'Inter', sans-serif;
@@ -82,32 +85,34 @@ def main():
         .stButton>button {
             background-color: #4CAF50;
             color: white;
-            border-radius: 10px;
-            height: 2.5em;
-            width: 200px;
+            border-radius: 8px;
+            height: 2.2em;
+            width: 180px;
             font-weight: 600;
             transition: 0.3s;
         }
         .stButton>button:hover {
-            background-color: #45a049;
+            background-color: #3e9145;
             transform: scale(1.03);
-        }
-        .download-button > button {
-            background-color: #0066cc !important;
-            color: white !important;
-            border-radius: 10px !important;
-            font-weight: 600 !important;
-        }
-        .download-button > button:hover {
-            background-color: #004c99 !important;
         }
         .metric-card {
             background-color: #ffffff;
-            border-radius: 15px;
-            box-shadow: 0px 2px 8px rgba(0,0,0,0.1);
-            padding: 20px;
-            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
+            padding: 10px 15px;
+            margin-bottom: 15px;
             text-align: center;
+            height: 100px;
+        }
+        .metric-card h3 {
+            font-size: 16px;
+            color: #333333;
+            margin-bottom: 5px;
+        }
+        .metric-card h2 {
+            font-size: 22px;
+            color: #1a73e8;
+            margin: 0;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -136,17 +141,21 @@ def main():
     # --- DATA DISPLAY ---
     if not cleaned_df.empty:
         csv_saved = save_df_to_csv(cleaned_df)
-        
-        # Metrics Section
+
+        # ✅ FIX TIMEZONE (Set to India Time)
+        india_tz = pytz.timezone("Asia/Kolkata")
+        local_time = datetime.now(india_tz).strftime("%Y-%m-%d %H:%M:%S")
+
+        # --- METRIC CARDS ---
         st.markdown("### 📊 Data Summary")
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"<div class='metric-card'><h3>👥 Total Contacts</h3><h2>{len(cleaned_df)}</h2></div>", unsafe_allow_html=True)
         with col2:
-            st.markdown(f"<div class='metric-card'><h3>🕒 Last Updated</h3><h2>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</h2></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-card'><h3>🕒 Last Updated</h3><h2>{local_time}</h2></div>", unsafe_allow_html=True)
         with col3:
             st.markdown(f"<div class='metric-card'><h3>🗂️ Columns</h3><h2>{len(cleaned_df.columns)}</h2></div>", unsafe_allow_html=True)
-        
+
         st.markdown("### 📋 Contacts Data")
         st.dataframe(cleaned_df, use_container_width=True)
 
@@ -160,11 +169,11 @@ def main():
                     mime="text/csv",
                     key="download_button",
                     use_container_width=True,
-                    help="Click to download the cleaned contacts as a CSV file.",
                     type="primary"
                 )
     else:
         st.info("ℹ️ No unique contacts found yet. Go to **'Collect Contacts'** or **'AI Web Scraper'** to add some!")
+
 
 if __name__ == '__main__':
     main()
