@@ -167,7 +167,10 @@ def mark_as_read(mail_id):
 # ===============================
 def process_follow_ups(db):
     """Sends a follow-up to contacts who haven't replied."""
-    # NOTE: For production, change timedelta to days=3 or your preferred waiting period.
+    
+    # --- IMPORTANT ---
+    # For real-world use, change the waiting period below from minutes to days.
+    # For example: datetime.timedelta(days=3)
     waiting_period = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2)
     
     pipeline = [
@@ -209,7 +212,7 @@ def process_follow_ups(db):
     return actions_taken
 
 def process_unsubscribes(db):
-    """Adds contacts to the unsubscribe list if they haven't replied after 5 emails."""
+    """Adds contacts to the unsubscribe list if they haven't replied after a set number of emails."""
     pipeline = [
         {'$match': {'event_type': {'$in': ['sent', 'follow_up_sent']}}},
         {'$group': {'_id': '$recipient_email', 'count': {'$sum': 1}}},
