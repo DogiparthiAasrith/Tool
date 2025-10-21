@@ -65,11 +65,13 @@ def send_email_smtp(db, to_email, subject, body):
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
         
-        log_event_to_db(db, "sent", to_email, subject, body, "success")
+        # --- CRITICAL FIX ---
+        # Log the first email with a specific, unique event type.
+        log_event_to_db(db, "initial_outreach", to_email, subject, body, "success")
         return True
     except Exception as e:
         st.error(f"❌ Failed to send to {to_email}: {e}")
-        log_event_to_db(db, "sent", to_email, subject, body, "failed")
+        log_event_to_db(db, "initial_outreach", to_email, subject, body, "failed")
         return False
 
 # ===============================
