@@ -26,7 +26,6 @@ CLEANED_COLLECTION_NAME = "cleaned_contacts"
 EMAIL_REGEX = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
 PHONE_REGEX = r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
 
-# **NEW:** List of common free email providers to help classify emails.
 PERSONAL_EMAIL_DOMAINS = [
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
     "icloud.com", "protonmail.com", "zoho.com", "gmx.com"
@@ -103,7 +102,6 @@ def save_to_cleaned_mongo(db, dict_data):
     except Exception as e:
         st.error(f"❌ Error during cleaned save operation: {e}")
 
-# **MODIFIED:** This function now classifies scraped emails before saving.
 def process_and_save_results(results, query, db):
     rows_for_display = []
     for item in results:
@@ -111,7 +109,6 @@ def process_and_save_results(results, query, db):
         all_emails = contact_info.get("emails", [])
         website_url = (item.get("url") or "").rstrip('/')
 
-        # Classify emails
         work_emails = [email for email in all_emails if email.split('@')[-1] not in PERSONAL_EMAIL_DOMAINS]
         personal_emails = [email for email in all_emails if email.split('@')[-1] in PERSONAL_EMAIL_DOMAINS]
 
@@ -122,7 +119,6 @@ def process_and_save_results(results, query, db):
         }
         save_to_raw_scraped_log(db, raw_scrape_data)
 
-        # **FIX:** Save the separated email lists to the database.
         cleaned_data = {
             "name": item.get("title", ""),
             "source_url": website_url,
@@ -136,10 +132,10 @@ def process_and_save_results(results, query, db):
         save_to_cleaned_mongo(db, cleaned_data)
 
         rows_for_display.append({
-            "company_name": item.get("title", ""), "website_url": website_url,
-            "work_emails": ", ".join(work_emails),
-            "personal_emails": ", ".join(personal_emails),
-            "phones": ", ".join(contact_info.get("phones", []))
+            "Company Name": item.get("title", ""), "Website URL": website_url,
+            "Work Emails": ", ".join(work_emails),
+            "Personal Emails": ", ".join(personal_emails),
+            "Phones": ", ".join(contact_info.get("phones", []))
         })
     return pd.DataFrame(rows_for_display)
 
@@ -147,45 +143,170 @@ def process_and_save_results(results, query, db):
 # STREAMLIT UI
 # ===============================
 def main():
-    st.title("🕸 AI Web Scraper")
-    st.markdown("Enter a query to find websites and scrape their contact information. Results are saved to a raw log, and unique contacts are added to the cleaned data list.")
-    query = st.text_input("Enter your search query (e.g., 'Hospitals in Hyderabad'):")
+    # Set page configuration for a wider layout and a custom title
+    st.set_page_config(layout="wide", page_title="AI Web Scraper", page_icon="🕸️")
 
-    if st.button("Search & Scrape"):
+    # Custom CSS for a professional look
+    st.markdown("""
+        <style>
+        .stApp {
+            background-color: #f0f2f6; /* Light gray background */
+        }
+        .css-vk329t e16z3jvj2 { /* Header container */
+            background-color: #ffffff;
+            padding: 20px;
+            border-bottom: 1px solid #e0e0e0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50; /* Darker blue for headings */
+            text-align: center;
+            font-size: 3em;
+            margin-bottom: 0.5em;
+        }
+        h2, h3, h4, h5, h6 {
+            color: #34495e; /* Slightly lighter dark blue */
+        }
+        .stButton button {
+            background-color: #3498db; /* Blue button */
+            color: white;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-size: 1.1em;
+            border: none;
+            transition: all 0.2s ease-in-out;
+        }
+        .stButton button:hover {
+            background-color: #2980b9; /* Darker blue on hover */
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .stTextInput label {
+            font-size: 1.1em;
+            color: #34495e;
+            font-weight: 500;
+        }
+        .stTextInput input {
+            border-radius: 8px;
+            border: 1px solid #cccccc;
+            padding: 10px;
+            font-size: 1em;
+        }
+        .stDataFrame {
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            overflow: hidden; /* Ensures borders are respected */
+        }
+        .stAlert {
+            border-radius: 8px;
+        }
+        .stSuccess {
+            background-color: #e6ffe6;
+            color: #006400;
+        }
+        .stError {
+            background-color: #ffe6e6;
+            color: #cc0000;
+        }
+        .stWarning {
+            background-color: #fff8e6;
+            color: #cc6600;
+        }
+        .stInfo {
+            background-color: #e6f7ff;
+            color: #004d99;
+        }
+        .stSpinner > div > div {
+            border-top-color: #3498db;
+        }
+        footer {visibility: hidden;} /* Hide default Streamlit footer */
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Header Section
+    st.markdown("<h1 style='text-align: center; color: #2c3e50;'>🕸️ AI Web Scraper</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #555; font-size: 1.1em;'>Enter a query to find websites, extract contact information, and categorize emails. Results are saved securely to MongoDB.</p>", unsafe_allow_html=True)
+
+    st.markdown("---") # Horizontal line for separation
+
+    # Input Section
+    st.subheader("⚙️ Search Configuration")
+    query = st.text_input("What kind of businesses are you looking for?", placeholder="e.g., 'Tech startups in Silicon Valley', 'Cafes in London', 'Dentists in New York'")
+    num_results = st.slider("Number of search results to process:", min_value=1, max_value=20, value=5)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        search_button = st.button("🚀 Start Scraping", use_container_width=True)
+    with col2:
+        if st.button("Reset Session", use_container_width=True, type="secondary"):
+            st.session_state.clear()
+            st.experimental_rerun()
+
+    st.markdown("---")
+
+    # Display Results Section
+    if search_button:
         if not SERPAPI_API_KEY:
-            st.error("❌ SERPAPI_API_KEY is not set!")
-            st.warning("Please add your SerpAPI key to your Streamlit secrets to continue.")
+            st.error("❌ **SerpAPI Key Missing!** Please add your `SERPAPI_API_KEY` to your Streamlit secrets (`.streamlit/secrets.toml`) to continue.")
             st.stop()
         if not query:
-            st.warning("Please enter a search query!")
+            st.warning("⚠️ Please enter a search query to begin!")
             return
 
         client, db = get_db_connection()
         if not client:
+            st.error("Cannot connect to MongoDB. Please check your `MONGO_URI` and network connection.")
             return
 
         try:
-            with st.spinner("Searching Google and scraping websites..."):
-                results = google_search(query, num_results=10)
-                progress_bar = st.progress(0, text="Scraping websites...")
-                for i, item in enumerate(results):
-                    website = item.get("url")
+            with st.spinner("Searching Google for relevant websites..."):
+                results = google_search(query, num_results=num_results)
+
+            if not results:
+                st.info("No organic search results found for your query. Try a different query.")
+                return
+
+            st.subheader("🌐 Scraping Websites for Contacts...")
+            progress_text = "Scraping in progress. Please wait."
+            progress_bar = st.progress(0, text=progress_text)
+
+            scraped_data_list = []
+            for i, item in enumerate(results):
+                website = item.get("url")
+                if website:
+                    progress_bar.progress((i + 1) / len(results), text=f"Scraping: {item.get('title', 'Unknown')} ({website})")
                     contact_page = find_contact_page(website)
                     item["contact_info"] = scrape_contact_page(contact_page)
-                    progress_bar.progress((i + 1) / len(results), text=f"Scraped: {website}")
-            st.info("Saving results to the database...")
-            df = process_and_save_results(results, query, db)
-            st.success("✅ Scraping and saving process completed!")
-            st.subheader("Scraped Data from this Session")
-            st.dataframe(df)
+                    scraped_data_list.append(item)
+                else:
+                    st.warning(f"Skipping a result due to missing URL: {item.get('title', 'N/A')}")
+
+            progress_bar.empty() # Clear the progress bar after completion
+            st.success("✅ Website scraping complete! Processing and saving data...")
+
+            df = process_and_save_results(scraped_data_list, query, db)
+
+            st.subheader("📊 Scraped Contact Data")
             if not df.empty:
+                st.dataframe(df, use_container_width=True)
                 st.download_button(
-                    "Download Session Data (CSV)",
-                    df.to_csv(index=False).encode("utf-8"),
-                    file_name=f"scraped_{query.replace(' ','_')}.csv"
+                    label="⬇️ Download Scraped Data (CSV)",
+                    data=df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"scraped_contacts_{query.replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Download the data displayed in the table above as a CSV file."
                 )
+            else:
+                st.info("No contact information was successfully extracted in this session.")
+
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
         finally:
             if client: client.close()
+            st.info("Database connection closed.")
+
+    st.markdown("---")
+    st.markdown("<p style='text-align: center; color: #888;'>Powered by Streamlit, SerpAPI, and MongoDB</p>", unsafe_allow_html=True)
 
 if __name__ == '__main__':
     main()
