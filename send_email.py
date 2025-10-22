@@ -60,24 +60,25 @@ def update_body(index, email_id):
 
 
 # ===============================
-# UNSUBSCRIBE HELPER (MODIFIED)
+# UNSUBSCRIBE HELPER
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
     """
     Appends a mailto link for unsubscribing. This avoids the 404 error
     by creating a pre-filled email for the user to send.
     """
-    # !!! IMPORTANT: Change this to the email address you will monitor for requests !!!
-    unsubscribe_inbox = "unsubscribe@morphius.in"
+    # !!! EDIT THIS LINE !!!
+    # Change the email address below to the inbox you will monitor for unsubscribe requests.
+    unsubscribe_inbox = "your-email-address@your-domain.com"
     
-    # URL-encode the subject and body for the mailto link
+    # URL-encode the subject and body for the mailto link to handle special characters
     subject = quote("Unsubscribe Request")
     mail_body = quote(f"Please remove my email address from your mailing list: {recipient_email}")
     
-    # Create the full mailto link
+    # Create the full mailto link that opens the user's email client
     mailto_link = f"mailto:{unsubscribe_inbox}?subject={subject}&body={mail_body}"
     
-    # Create the unsubscribe text to be appended to the email
+    # Create the unsubscribe text to be appended to the email body
     unsubscribe_text = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: {mailto_link}"
     
     return body_text.strip() + unsubscribe_text
@@ -149,7 +150,7 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using fallback template. (Error: {e})")
         body = get_fallback_template(domain, name, email)
 
-    # Append unsubscribe link
+    # Append the dynamic unsubscribe link to every generated email body
     return append_unsubscribe_link(body, email)
 
 
@@ -157,6 +158,7 @@ def generate_personalized_email_body(contact_details):
 # MAIN STREAMLIT APP
 # ===============================
 def main():
+    st.set_page_config(layout="wide")
     st.title("📧 Morphius AI: Generate & Edit Email Drafts")
 
     if 'edited_emails' not in st.session_state:
@@ -174,7 +176,8 @@ def main():
     with col1:
         if st.button("🔍 Filter Contacts", use_container_width=True):
             if prompt:
-                domain = decode_prompt_to_domain(prompt)
+                with st.spinner("Decoding prompt..."):
+                    domain = decode_prompt_to_domain(prompt)
                 if domain and domain != 'general':
                     st.session_state.filter_domain = domain
                     st.success(f"Filtered contacts for domain: {domain}")
@@ -212,26 +215,27 @@ def main():
     selected_rows = edited_df[edited_df['Select']]
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty, use_container_width=True):
-        st.session_state.edited_emails = []
-        for i, row in selected_rows.iterrows():
-            to_email = None
-            work_email_val = row.get('work_emails')
-            if isinstance(work_email_val, str) and work_email_val.strip():
-                to_email = work_email_val.split(',')[0].strip()
-            if not to_email:
-                personal_email_val = row.get('personal_emails')
-                if isinstance(personal_email_val, str) and personal_email_val.strip():
-                    to_email = personal_email_val.split(',')[0].strip()
-            if not to_email:
-                st.warning(f"⚠ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
-                continue
-            body = generate_personalized_email_body(row)
-            st.session_state.edited_emails.append({
-                "id": i, "name": row['name'], "to_email": to_email,
-                "subject": "Connecting from Morphius AI", "body": body,
-                "contact_details": row.to_dict(),
-                "regen_counter": 0
-            })
+        with st.spinner(f"Generating {len(selected_rows)} email drafts..."):
+            st.session_state.edited_emails = []
+            for i, row in selected_rows.iterrows():
+                to_email = None
+                work_email_val = row.get('work_emails')
+                if isinstance(work_email_val, str) and work_email_val.strip():
+                    to_email = work_email_val.split(',')[0].strip()
+                if not to_email:
+                    personal_email_val = row.get('personal_emails')
+                    if isinstance(personal_email_val, str) and personal_email_val.strip():
+                        to_email = personal_email_val.split(',')[0].strip()
+                if not to_email:
+                    st.warning(f"⚠ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
+                    continue
+                body = generate_personalized_email_body(row.to_dict())
+                st.session_state.edited_emails.append({
+                    "id": i, "name": row['name'], "to_email": to_email,
+                    "subject": "Connecting from Morphius AI", "body": body,
+                    "contact_details": row.to_dict(),
+                    "regen_counter": 0
+                })
         st.rerun()
 
     if st.session_state.edited_emails:
@@ -248,7 +252,8 @@ def main():
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
                     if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}", use_container_width=True):
-                        new_body = generate_personalized_email_body(email_draft['contact_details'])
+                        with st.spinner("Generating a new draft..."):
+                            new_body = generate_personalized_email_body(email_draft['contact_details'])
                         st.session_state.edited_emails[i]['body'] = new_body
                         st.session_state.edited_emails[i]['regen_counter'] += 1
                         st.toast(f"Generated a new draft for {email_draft['name']}!")
