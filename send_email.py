@@ -252,8 +252,9 @@ def main():
         df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
         csv_buffer = StringIO()
         df_export.to_csv(csv_buffer, index=False)
-        st.download_button("⬇ Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
+        st.download_button("📥 Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
 
 
 if __name__ == "__main__":
     main()
+
