@@ -68,7 +68,7 @@ def append_unsubscribe_link(body_text, recipient_email):
     only the recipient and subject, which is more reliable across email clients.
     """
     # !!! IMPORTANT: Make sure this email address is correct !!!
-    unsubscribe_inbox = "your-email-address@your-domain.com"
+    unsubscribe_inbox = "thridorbit03@gmail.com"
     
     # URL-encode only the subject. The subject line is sufficient for the request.
     subject = quote("Unsubscribe Request")
@@ -275,6 +275,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
