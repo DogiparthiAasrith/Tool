@@ -60,11 +60,27 @@ def update_body(index, email_id):
 
 
 # ===============================
-# UNSUBSCRIBE HELPER
+# UNSUBSCRIBE HELPER (MODIFIED)
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
-    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://www.morphius.in/unsubscribe?email={quote(recipient_email)}"
-    return body_text.strip() + unsubscribe_link
+    """
+    Appends a mailto link for unsubscribing. This avoids the 404 error
+    by creating a pre-filled email for the user to send.
+    """
+    # !!! IMPORTANT: Change this to the email address you will monitor for requests !!!
+    unsubscribe_inbox = "unsubscribe@morphius.in"
+    
+    # URL-encode the subject and body for the mailto link
+    subject = quote("Unsubscribe Request")
+    mail_body = quote(f"Please remove my email address from your mailing list: {recipient_email}")
+    
+    # Create the full mailto link
+    mailto_link = f"mailto:{unsubscribe_inbox}?subject={subject}&body={mail_body}"
+    
+    # Create the unsubscribe text to be appended to the email
+    unsubscribe_text = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: {mailto_link}"
+    
+    return body_text.strip() + unsubscribe_text
 
 
 # ===============================
@@ -156,7 +172,6 @@ def main():
     prompt = st.text_input("Enter a prompt (e.g., 'top 10 colleges', 'e-commerce startups')", key="prompt_input")
     col1, col2 = st.columns(2)
     with col1:
-        # MODIFICATION: Increased button size
         if st.button("🔍 Filter Contacts", use_container_width=True):
             if prompt:
                 domain = decode_prompt_to_domain(prompt)
@@ -170,7 +185,6 @@ def main():
             else:
                 st.warning("Please enter a prompt first.")
     with col2:
-        # MODIFICATION: Increased button size
         if st.button("🔄 Show All Contacts", use_container_width=True):
             st.session_state.filter_domain = None
             st.rerun()
@@ -257,4 +271,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
