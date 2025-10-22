@@ -34,39 +34,31 @@ OTHER_SERVICES_LINK = os.getenv("OTHER_SERVICES_LINK")
 # DATABASE FUNCTIONS
 # ===============================
 def get_db_connection():
-    """Establishes a connection to the MongoDB database."""
     try:
         client = MongoClient(MONGO_URI)
-        # The ismaster command is cheap and does not require auth.
         client.admin.command('ismaster')
         db = client[MONGO_DB_NAME]
         return client, db
     except ConnectionFailure as e:
-        st.error(f"❌ **Database Connection Error:** Could not connect to MongoDB. ({e})")
-        return None, None
-    except Exception as e:
-        st.error(f"❌ **An unexpected error occurred during database connection:** {e}")
+        st.error(f"❌ *Database Connection Error:* {e}")
         return None, None
 
 def setup_database_indexes(db):
     """Ensures all required unique indexes exist."""
     try:
-        if db is not None:
-            db.unsubscribe_list.create_index("email", unique=True)
+        db.unsubscribe_list.create_index("email", unique=True)
     except OperationFailure as e:
         st.error(f"❌ Failed to set up database indexes: {e}")
 
 def log_event_to_db(db, event_type, email_addr, subject, status=None, interest_level=None, mail_id=None, body=None):
-    """Logs an event to the 'email_logs' collection in the database."""
     try:
-        if db is not None:
-            log_entry = {
-                "timestamp": datetime.datetime.now(datetime.timezone.utc),
-                "event_type": event_type, "recipient_email": email_addr,
-                "subject": subject, "status": status, "interest_level": interest_level,
-                "mail_id": mail_id, "body": body
-            }
-            db.email_logs.insert_one(log_entry)
+        log_entry = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc),
+            "event_type": event_type, "recipient_email": email_addr,
+            "subject": subject, "status": status, "interest_level": interest_level,
+            "mail_id": mail_id, "body": body
+        }
+        db.email_logs.insert_one(log_entry)
     except Exception as e:
         st.error(f"❌ Failed to log event to database: {e}")
 
@@ -109,7 +101,7 @@ def check_interest_with_openai(email_body):
         interest = response.choices[0].message.content.strip().lower().replace(".", "")
         return interest if interest in ["positive", "negative", "neutral"] else "neutral"
     except Exception as e:
-        st.warning(f"⚠️ OpenAI API failed. Falling back to keyword-based analysis. (Error: {e})")
+        st.warning(f"⚠ OpenAI API failed. Falling back to keyword-based analysis. (Error: {e})")
         return check_interest_manually(email_body)
 
 def get_unread_emails():
@@ -150,7 +142,6 @@ def send_reply(db, to_email, original_subject, interest_level, mail_id):
         subject = f"Re: {original_subject}"
         body = f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services which you can explore here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
     else:
-        # Do not send a reply for uncategorized interest levels
         return
 
     msg = MIMEMultipart(); msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, subject; msg.attach(MIMEText(body, "plain"))
@@ -165,7 +156,6 @@ def send_reply(db, to_email, original_subject, interest_level, mail_id):
         st.error(f"❌ Failed to send reply to {to_email}: {e}")
 
 def mark_as_read(mail_id):
-    """Marks a specific email as read ('\Seen') in the inbox."""
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER); mail.login(EMAIL, PASSWORD); mail.select("inbox")
         mail.store(mail_id.encode(), '+FLAGS', '\\Seen'); mail.logout()
@@ -191,7 +181,7 @@ def process_follow_ups(db):
         {'$match': {
             '_id': {'$nin': replied_emails},
             'last_contact_time': {'$lt': waiting_period},
-            'outreach_count': {'$lt': 3} # Limit to less than 3 total outreach attempts
+            'outreach_count': {'$lt': 3}
         }}
     ]
     
@@ -225,7 +215,7 @@ def process_unsubscribes(db):
     pipeline = [
         {'$match': {'event_type': {'$in': ['initial_outreach', 'follow_up_sent']}}},
         {'$group': {'_id': '$recipient_email', 'count': {'$sum': 1}}},
-        {'$match': {'count': {'$gte': 5}}} # Unsubscribe after 5 total outreach emails
+        {'$match': {'count': {'$gte': 5}}}
     ]
     sent_counts = list(db.email_logs.aggregate(pipeline))
     
@@ -259,16 +249,8 @@ def process_unsubscribes(db):
 # ===============================
 def main():
     st.title("Automated Reply Handler")
-    mongo_client, db = get_db_connection()
-
-    # --- FIX ---
-    # The original error is caused by incorrect boolean testing of a database object.
-    # The check below ensures that both the client and db objects are valid before proceeding.
-    # Always use 'is not None' to check for database objects.
-    if mongo_client is None or db is None:
-        st.error("❌ Database connection is not available. Cannot proceed.")
-        return
-
+    client, db = get_db_connection()
+    if not client: return
     setup_database_indexes(db)
 
     if st.button("Check Emails & Run Automations"):
@@ -282,7 +264,7 @@ def main():
                     st.write(f"Processing reply from: {mail['from']}")
                     log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                     interest = check_interest_with_openai(mail["body"])
-                    st.write(f"-> Interest level: **{interest}**")
+                    st.write(f"-> Interest level: *{interest}*")
                     send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
                 st.success("✅ Finished processing new replies.")
             else:
@@ -305,9 +287,7 @@ def main():
             st.success("✅ All automated tasks complete.")
             st.markdown("---")
 
-    # Close the client connection when the app is done
-    if mongo_client:
-        mongo_client.close()
+    client.close()
 
-if __name__ == "__main__":
+if _name_ == "_main_":
     main()
