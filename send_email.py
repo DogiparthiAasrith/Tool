@@ -231,14 +231,16 @@ def main():
                 
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
-                    if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}"):
+                    # MODIFICATION: Added use_container_width=True to make the button larger
+                    if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}", use_container_width=True):
                         new_body = generate_personalized_email_body(email_draft['contact_details'])
                         st.session_state.edited_emails[i]['body'] = new_body
                         st.session_state.edited_emails[i]['regen_counter'] += 1
                         st.toast(f"Generated a new draft for {email_draft['name']}!")
                         st.rerun()
                 with b_col2:
-                    if st.button("✍ Clear & Write Manually", key=f"clear_{unique_id}_{regen_count}"):
+                    # MODIFICATION: Added use_container_width=True to make the button larger
+                    if st.button("✍ Clear & Write Manually", key=f"clear_{unique_id}_{regen_count}", use_container_width=True):
                         manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
                         manual_template = append_unsubscribe_link(manual_template, email_draft['to_email'])
                         st.session_state.edited_emails[i]['body'] = manual_template
@@ -255,6 +257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
