@@ -111,7 +111,7 @@ def decode_prompt_to_domain(prompt):
 
 def get_fallback_template(domain, name, email=""):
     greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
-    signature = "\n\nBest regards,\nGowthami\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+    signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
     if "edtech" in str(domain).lower():
         body = f"I came across your profile in the EdTech space. At Morphius AI, we personalize learning and improve educational outcomes.\n\nI would be keen to connect and share insights."
     elif "commerce" in str(domain).lower():
@@ -276,3 +276,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
