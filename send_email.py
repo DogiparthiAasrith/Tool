@@ -60,23 +60,22 @@ def update_body(index, email_id):
 
 
 # ===============================
-# UNSUBSCRIBE HELPER
+# UNSUBSCRIBE HELPER (Corrected for Better Compatibility)
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
     """
-    Appends a mailto link for unsubscribing. This avoids the 404 error
-    by creating a pre-filled email for the user to send.
+    Appends a more compatible mailto link for unsubscribing. It pre-fills
+    only the recipient and subject, which is more reliable across email clients.
     """
-    # !!! EDIT THIS LINE !!!
-    # Change the email address below to the inbox you will monitor for unsubscribe requests.
+    # !!! IMPORTANT: Make sure this email address is correct !!!
     unsubscribe_inbox = "your-email-address@your-domain.com"
     
-    # URL-encode the subject and body for the mailto link to handle special characters
+    # URL-encode only the subject. The subject line is sufficient for the request.
     subject = quote("Unsubscribe Request")
-    mail_body = quote(f"Please remove my email address from your mailing list: {recipient_email}")
     
-    # Create the full mailto link that opens the user's email client
-    mailto_link = f"mailto:{unsubscribe_inbox}?subject={subject}&body={mail_body}"
+    # Create a simpler mailto link without the 'body' parameter.
+    # This is much more likely to work correctly everywhere.
+    mailto_link = f"mailto:{unsubscribe_inbox}?subject={subject}"
     
     # Create the unsubscribe text to be appended to the email body
     unsubscribe_text = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: {mailto_link}"
@@ -276,4 +275,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
