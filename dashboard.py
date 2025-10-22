@@ -84,7 +84,13 @@ def main():
     
     reply_rate = (total_replies / total_sent * 100) if total_sent > 0 else 0
     
-    tab1, tab2, tab3 = st.tabs(["📈 Campaign Funnel", "Key Metrics", "📜 Full Activity Log"])
+    # MODIFICATION: Use Markdown in tab labels to make them larger and bolder
+    tab_labels = [
+        "#### 📈 Campaign Funnel",
+        "#### 📊 Key Metrics",
+        "#### 📜 Full Activity Log"
+    ]
+    tab1, tab2, tab3 = st.tabs(tab_labels)
 
     with tab1:
         st.header("Email Outreach Funnel")
