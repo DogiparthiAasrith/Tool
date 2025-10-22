@@ -253,5 +253,6 @@ def main():
         st.download_button("⬇ Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
+
