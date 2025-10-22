@@ -17,8 +17,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client_ai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-GMAIL_USER = os.getenv("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 # ===============================
 # HELPERS & CALLBACKS
@@ -278,3 +276,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
