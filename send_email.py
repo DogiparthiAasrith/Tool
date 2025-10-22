@@ -7,7 +7,6 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from urllib.parse import quote
-import yagmail  # For sending HTML emails
 
 # ===============================
 # LOAD CONFIG
@@ -117,38 +116,6 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using fallback template. (Error: {e})")
         return get_fallback_template(domain, name)
 
-# ===============================
-# HTML EMAIL FORMATTING & SENDING
-# ===============================
-def wrap_body_in_html(to_email, body_text):
-    """Wraps plain text in HTML and adds unsubscribe & help links."""
-    paragraphs = body_text.split("\n\n")
-    html_paragraphs = "".join([f"<p>{p.strip()}</p>" for p in paragraphs if p.strip()])
-    
-    features_html = (
-        "<ul>"
-        "<li>Workflow automation</li>"
-        "<li>AI chatbots</li>"
-        "<li>Analytics dashboards</li>"
-        "</ul>"
-    )
-    
-    cta_html = (
-        f'<p><a href="https://calendly.com/morphius-ai/intro" target="_blank">'
-        f"📅 Book a quick 15-min call</a></p>"
-    )
-    
-    encoded_email = quote(to_email)
-    footer_html = (
-        f'<p><small>Best regards,<br>'
-        f'<strong>Morphius AI Team</strong><br>'
-        f'<a href="https://www.morphius.in/">www.morphius.in</a><br>'
-        f'To unsubscribe from future emails, click here: '
-        f'<a href="https://yourdomain.com/unsubscribe?email={encoded_email}">Unsubscribe</a><br>'
-        f'Need help? Visit: <a href="https://yourdomain.com/help">Help Center</a></small></p>'
-    )
-    
-    return f"<html><body>{html_paragraphs}{features_html}{cta_html}{footer_html}</body></html>"
 
 def send_email_html(to_email, subject, body_text, name):
     try:
@@ -276,4 +243,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
