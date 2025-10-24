@@ -1,3 +1,5 @@
+--- START OF FILE reply.py ---
+
 import streamlit as st
 import imaplib
 import email
@@ -11,6 +13,7 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from urllib.parse import quote
 
 # Load environment variables from .env file
 load_dotenv()
@@ -197,7 +200,12 @@ def process_follow_ups(db):
         email_to_follow_up = candidate['_id']
         if email_to_follow_up in unsubscribed_emails: continue
 
-        subject, body = "Quick Follow-Up", f"Hi,\n\nJust wanted to quickly follow up on my previous email. If it's not the right time, no worries.\n\nWe also have other services you might find interesting: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
+        subject = "Quick Follow-Up"
+        body_content = f"Hi,\n\nJust wanted to quickly follow up on my previous email. If it's not the right time, no worries.\n\nWe also have other services you might find interesting: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
+        unsubscribe_link_url = f"https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(email_to_follow_up)}"
+        unsubscribe_text = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: {unsubscribe_link_url}"
+        body = body_content + unsubscribe_text
+        
         msg = MIMEMultipart(); msg["From"], msg["To"], msg["Subject"] = EMAIL, email_to_follow_up, subject; msg.attach(MIMEText(body, "plain"))
         try:
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
