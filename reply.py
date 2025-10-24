@@ -136,22 +136,32 @@ def get_unread_emails():
 
 def send_reply(db, to_email, original_subject, interest_level, mail_id):
     """Sends a reply based on the classified interest level."""
+    body = ""
+    subject = f"Re: {original_subject}"
+
     if interest_level == "positive":
-        subject = f"Re: {original_subject}"
         body = f"Hi,\n\nThank you for your positive response! I'm glad to hear you're interested.\n\nYou can book a meeting with me directly here: {SCHEDULING_LINK}\n\nI look forward to speaking with you.\n\nBest regards,\nAasrith"
     elif interest_level in ["negative", "neutral"]:
-        subject = f"Re: {original_subject}"
         body = f"Hi,\n\nThank you for getting back to me. I understand.\n\nIn case you're interested, we also offer other services which you can explore here: {OTHER_SERVICES_LINK}\n\nBest regards,\nAasrith"
     else:
         return
 
-    msg = MIMEMultipart(); msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, subject; msg.attach(MIMEText(body, "plain"))
+    # Append the unsubscribe link to all replies
+    unsubscribe_link_url = f"https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(to_email)}"
+    unsubscribe_text = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: {unsubscribe_link_url}"
+    final_body = body + unsubscribe_text
+
+    msg = MIMEMultipart()
+    msg["From"], msg["To"], msg["Subject"] = EMAIL, to_email, subject
+    msg.attach(MIMEText(final_body, "plain"))
+
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls(); server.login(EMAIL, PASSWORD)
+            server.starttls()
+            server.login(EMAIL, PASSWORD)
             server.sendmail(EMAIL, to_email, msg.as_string())
         st.success(f"✅ Sent '{interest_level}' reply to {to_email}")
-        log_event_to_db(db, f"replied_{interest_level}", to_email, subject, "success", interest_level, mail_id, body)
+        log_event_to_db(db, f"replied_{interest_level}", to_email, subject, "success", interest_level, mail_id, final_body)
         mark_as_read(mail_id)
     except Exception as e:
         st.error(f"❌ Failed to send reply to {to_email}: {e}")
@@ -269,21 +279,16 @@ def main():
                 for mail in unread_emails:
                     st.write(f"Processing reply from: {mail['from']}")
                     
-                    # <<< START OF MODIFICATION >>>
-                    # Check if the sender is a known contact we have emailed before.
                     is_known_contact = db.email_logs.find_one({"recipient_email": mail['from']})
 
                     if is_known_contact:
-                        # If they are in the database, process the reply
                         log_event_to_db(db, "received", mail["from"], mail["subject"], mail_id=mail["id"], body=mail["body"])
                         interest = check_interest_with_openai(mail["body"])
                         st.write(f"-> Interest level: *{interest}*")
                         send_reply(db, mail["from"], mail["subject"], interest, mail["id"])
                     else:
-                        # If they are NOT in the database, ignore them and mark as read to avoid re-processing
                         st.warning(f"⚠️ Ignored email from {mail['from']} as they are not a known contact in the database.")
                         mark_as_read(mail["id"])
-                    # <<< END OF MODIFICATION >>>
 
                 st.success("✅ Finished processing new replies.")
             else:
@@ -310,4 +315,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
