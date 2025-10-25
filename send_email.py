@@ -16,6 +16,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client_ai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
 # ===============================
 # HELPERS & CALLBACKS
 # ===============================
@@ -29,6 +30,7 @@ def get_db_connection():
         st.error(f"❌ Database Connection Error: {e}")
         return None, None
 
+
 def fetch_cleaned_contacts(db):
     try:
         cursor = db.cleaned_contacts.find().sort('_id', -1)
@@ -40,12 +42,14 @@ def fetch_cleaned_contacts(db):
         st.warning(f"⚠ Could not fetch contacts. Error: {e}")
         return pd.DataFrame()
 
+
 def update_subject(index, email_id):
     for i, email_draft in enumerate(st.session_state.edited_emails):
         if email_draft['id'] == email_id:
             widget_key = f"subject_{email_id}_{email_draft['regen_counter']}"
             st.session_state.edited_emails[i]['subject'] = st.session_state[widget_key]
             break
+
 
 def update_body(index, email_id):
     for i, email_draft in enumerate(st.session_state.edited_emails):
@@ -54,12 +58,14 @@ def update_body(index, email_id):
             st.session_state.edited_emails[i]['body'] = st.session_state[widget_key]
             break
 
+
 # ===============================
 # UNSUBSCRIBE HELPER
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
-    unsubscribe_link = f"\n\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
+    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-5v1tdqur8-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
     return body_text.strip() + unsubscribe_link
+
 
 # ===============================
 # AI-POWERED LOGIC
@@ -85,10 +91,10 @@ def decode_prompt_to_domain(prompt):
         st.error(f"OpenAI API Error: {e}")
         return None
 
+
 def get_fallback_template(domain, name, email=""):
-    greeting =  "Dear Sir/Madam,"
+    greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
     signature = "\n\nBest regards,\nGowthami\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-    
     if "edtech" in str(domain).lower():
         body = f"I came across your profile in the EdTech space. At Morphius AI, we personalize learning and improve educational outcomes.\n\nI would be keen to connect and share insights."
     elif "commerce" in str(domain).lower():
@@ -97,19 +103,18 @@ def get_fallback_template(domain, name, email=""):
         body = f"Your work in healthcare is impressive. At Morphius AI, we leverage AI to streamline diagnostics and improve patient care pathways.\n\nI would value a discussion on healthcare technology."
     else:
         body = f"I came across your profile and was interested in your work in the {domain} sector. Morphius AI builds AI solutions across industries.\n\nI would be delighted to connect."
-    
+
     final_body = f"{greeting}\n\n{body}{signature}"
     return append_unsubscribe_link(final_body, email)
+
 
 def generate_personalized_email_body(contact_details):
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
     email = contact_details.get('work_emails') or contact_details.get('personal_emails', '')
-    
-    greeting = "Dear Sir/Madam,"
+    greeting = f"Hi {name}," if pd.notna(name) and name.strip() else "Dear Sir/Madam,"
     signature = "\n\nBest regards,\nGowthami\nEmployee, Morphius AI\nhttps://www.morphius.in/"
-    
     try:
         prompt = f"""
         Write a professional outreach email for {name} in the {domain} sector. LinkedIn: {linkedin}.
@@ -128,7 +133,9 @@ def generate_personalized_email_body(contact_details):
         st.warning(f"⚠ OpenAI API failed. Using fallback template. (Error: {e})")
         body = get_fallback_template(domain, name, email)
 
+    # Append unsubscribe link
     return append_unsubscribe_link(body, email)
+
 
 # ===============================
 # MAIN STREAMLIT APP
@@ -149,7 +156,8 @@ def main():
     prompt = st.text_input("Enter a prompt (e.g., 'top 10 colleges', 'e-commerce startups')", key="prompt_input")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔍 Filter Contacts"):
+        # MODIFICATION: Increased button size
+        if st.button("🔍 Filter Contacts", use_container_width=True):
             if prompt:
                 domain = decode_prompt_to_domain(prompt)
                 if domain and domain != 'general':
@@ -162,7 +170,8 @@ def main():
             else:
                 st.warning("Please enter a prompt first.")
     with col2:
-        if st.button("🔄 Show All Contacts"):
+        # MODIFICATION: Increased button size
+        if st.button("🔄 Show All Contacts", use_container_width=True):
             st.session_state.filter_domain = None
             st.rerun()
 
@@ -188,7 +197,7 @@ def main():
     edited_df = st.data_editor(display_df, hide_index=True, disabled=list(display_df.columns.drop("Select")), key="data_editor")
     selected_rows = edited_df[edited_df['Select']]
 
-    if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty):
+    if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty, use_container_width=True):
         st.session_state.edited_emails = []
         for i, row in selected_rows.iterrows():
             to_email = None
@@ -221,18 +230,18 @@ def main():
                               key=f"subject_{unique_id}_{regen_count}", on_change=update_subject, args=(i, unique_id))
                 st.text_area("Body", value=email_draft['body'], height=250,
                              key=f"body_{unique_id}_{regen_count}", on_change=update_body, args=(i, unique_id))
-                
+
                 b_col1, b_col2 = st.columns(2)
                 with b_col1:
-                    if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}"):
+                    if st.button("🔄 Regenerate Body", key=f"regen_{unique_id}_{regen_count}", use_container_width=True):
                         new_body = generate_personalized_email_body(email_draft['contact_details'])
                         st.session_state.edited_emails[i]['body'] = new_body
                         st.session_state.edited_emails[i]['regen_counter'] += 1
                         st.toast(f"Generated a new draft for {email_draft['name']}!")
                         st.rerun()
                 with b_col2:
-                    if st.button("✍ Clear & Write Manually", key=f"clear_{unique_id}_{regen_count}"):
-                        manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nGowthami\nEmployee, Morphius AI\nhttps://www.morphius.in/"
+                    if st.button("✍ Clear & Write Manually", key=f"clear_{unique_id}_{regen_count}", use_container_width=True):
+                        manual_template = f"Hi {email_draft.get('name', '')},\n\n\n\nBest regards,\nAasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
                         manual_template = append_unsubscribe_link(manual_template, email_draft['to_email'])
                         st.session_state.edited_emails[i]['body'] = manual_template
                         st.session_state.edited_emails[i]['regen_counter'] += 1
@@ -243,7 +252,8 @@ def main():
         df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body"]]
         csv_buffer = StringIO()
         df_export.to_csv(csv_buffer, index=False)
-        st.download_button("⬇ Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
+        st.download_button("📥 Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
+
 
 if __name__ == "__main__":
     main()
