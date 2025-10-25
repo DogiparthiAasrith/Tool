@@ -231,7 +231,7 @@ def process_unsubscribes(db):
     pipeline = [
         {'$match': {'event_type': {'$in': ['initial_outreach', 'follow_up_sent']}}},
         {'$group': {'_id': '$recipient_email', 'count': {'$sum': 1}}},
-        {'$match': {'count': {'$gte': 1}}}
+        {'$match': {'count': {'$gte': 10}}}
     ]
     sent_counts = list(db.email_logs.aggregate(pipeline))
     
@@ -315,5 +315,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
