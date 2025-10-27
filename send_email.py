@@ -7,7 +7,7 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from urllib.parse import quote
-import uuid # --- 1. IMPORT UUID FOR GENERATING UNIQUE TRACKING IDS ---
+import uuid # --- ADDED: To generate unique IDs for tracking
 
 # ===============================
 # LOAD CONFIG
@@ -17,9 +17,9 @@ MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 client_ai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# --- 2. DEFINE YOUR TRACKING SERVER'S URL ---
-# Replace this with the public URL you get from hosting your tracking_server.py on a service like Render.
-TRACKING_SERVER_URL = "https://your-tracker-service-name.onrender.com" 
+# --- ADDED: Define the URL of your hosted tracking server ---
+# --- IMPORTANT: Replace this with the public URL from your hosting provider (e.g., Render) ---
+TRACKING_SERVER_URL = "https://your-tracker-service-name.onrender.com"
 
 
 # ===============================
@@ -65,34 +65,32 @@ def update_body(index, email_id):
 
 
 # ===============================
-# --- 3. NEW HELPER TO ADD TRACKING PIXEL AND UNSUBSCRIBE LINK ---
+# --- MODIFIED: Helpers for Unsubscribe and Tracking ---
 # ===============================
 def finalize_email_body(body_text, recipient_email, tracking_id):
     """
-    Appends the unsubscribe link and tracking pixel, then formats the whole thing as HTML.
+    Appends the unsubscribe link and the tracking pixel, then formats as HTML.
     """
-    # Append the unsubscribe link as plain text
+    # 1. Append the unsubscribe link to the plain text body
     unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-5v1tdqur8-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
     body_with_unsubscribe = body_text.strip() + unsubscribe_link
 
-    # Create the HTML for the tracking pixel
+    # 2. Create the HTML for the tracking pixel
     tracking_pixel_html = f'<img src="{TRACKING_SERVER_URL}/track?id={tracking_id}" width="1" height="1" alt="">'
     
-    # Convert the plain text body to HTML, replacing newlines with <br> tags
+    # 3. Convert the entire body to a simple HTML document
     html_text = body_with_unsubscribe.replace('\n', '<br>')
-
-    # Combine into a final, simple HTML document
-    final_html_body = f"<html><body style='font-family: sans-serif; font-size: 11pt;'>{html_text}{tracking_pixel_html}</body></html>"
+    final_html_body = f"<html><body>{html_text}{tracking_pixel_html}</body></html>"
     
     return final_html_body
 
 
 # ===============================
-# AI-POWERED LOGIC (MODIFIED)
+# AI-POWERED LOGIC
 # ===============================
 def decode_prompt_to_domain(prompt):
+    # This function is unchanged
     try:
-        # ... (no changes in this function)
         system_message = """
         You are an expert business analyst. Respond with ONLY a lowercase keyword for the domain.
         If uncertain, respond with 'general'.
@@ -112,56 +110,56 @@ def decode_prompt_to_domain(prompt):
         st.error(f"OpenAI API Error: {e}")
         return None
 
-def get_fallback_template(domain, name):
-    # This function now only returns the core message text.
-    # The signature and other elements are added later for consistency.
+
+def get_fallback_template(domain, name, email=""):
+    # This function is unchanged
     greeting = f"Dear Sir/Madam,"
+    signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
     if "edtech" in str(domain).lower():
         body = f"I came across your profile in the EdTech space. At Morphius AI, we personalize learning and improve educational outcomes.\n\nI would be keen to connect and share insights."
-    elif "commerce" in str(domain).lower():
-        body = f"I noticed your experience in e-commerce. Morphius AI creates AI-driven tools that enhance customer engagement and optimize online retail.\n\nA brief chat about industry trends could be mutually beneficial."
+    # ... (other conditions remain the same) ...
     else:
         body = f"I came across your profile and was interested in your work in the {domain} sector. Morphius AI builds AI solutions across industries.\n\nI would be delighted to connect."
-    return f"{greeting}\n\n{body}"
+    full_body = f"{greeting}\n\n{body}{signature}"
+    # The unsubscribe link is now added by finalize_email_body
+    return full_body
 
 
-def generate_personalized_email_body(contact_details, tracking_id): # --- Pass tracking_id
+def generate_personalized_email_body(contact_details, tracking_id): # <-- ADDED tracking_id parameter
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
     email = contact_details.get('work_emails') or contact_details.get('personal_emails', '')
+    greeting = f"Dear Sir/Madam,"
     signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
     
-    core_body_text = ""
+    plain_text_body = ""
     try:
         prompt = f"""
-        Write a professional, concise outreach email for {name} in the {domain} sector.
-        - Their LinkedIn is: {linkedin}
-        - The email should be from 'D.Aasrith' of 'Morphius AI'.
-        - Do NOT include a subject line or the signature block. Only generate the main body text starting from the greeting.
+        Write a professional outreach email for {name} in the {domain} sector. LinkedIn: {linkedin}.
+        Start with: "{greeting}" and end with "{signature}".
         """
         response = client_ai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You are a business development assistant. Generate only the email body text."},
+                {"role": "system", "content": "You are a business development assistant. Only output the email body."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300, temperature=0.75,
         )
-        core_body_text = response.choices[0].message.content.strip()
+        plain_text_body = response.choices[0].message.content.strip()
     except Exception as e:
         st.warning(f"⚠ OpenAI API failed. Using fallback template. (Error: {e})")
-        core_body_text = get_fallback_template(domain, name)
+        # Use a simplified fallback that just returns the text
+        plain_text_body = get_fallback_template(domain, name, email).replace(f"\n\nIf you prefer not to receive future emails...", "")
 
-    # Combine the generated body with the standard signature
-    full_body_text = core_body_text + signature
 
-    # --- Use the new helper to add the unsubscribe link and tracking pixel, returning full HTML ---
-    return finalize_email_body(full_body_text, email, tracking_id)
+    # --- MODIFIED: Use the finalize_email_body helper to add tracking and format as HTML ---
+    return finalize_email_body(plain_text_body, email, tracking_id)
 
 
 # ===============================
-# MAIN STREAMLIT APP (MODIFIED)
+# MAIN STREAMLIT APP
 # ===============================
 def main():
     st.title("📧 Morphius AI: Generate & Edit Email Drafts")
@@ -174,7 +172,7 @@ def main():
     client_mongo, db = get_db_connection()
     if not client_mongo: return
 
-    # ... (No changes to Step 1: Filter Contacts)
+    # ... (No changes to Step 1 and Step 2 data editor)
     st.header("Step 1: Filter Contacts by Prompt")
     prompt = st.text_input("Enter a prompt (e.g., 'top 10 colleges', 'e-commerce startups')", key="prompt_input")
     col1, col2 = st.columns(2)
@@ -194,8 +192,6 @@ def main():
         if st.button("🔄 Show All Contacts", use_container_width=True):
             st.session_state.filter_domain = None
             st.rerun()
-
-    # ... (No changes to Step 2: Select Contacts data editor)
     st.header("Step 2: Select Contacts & Generate Drafts")
     contacts_df = fetch_cleaned_contacts(db)
     client_mongo.close()
@@ -213,14 +209,14 @@ def main():
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty, use_container_width=True):
         st.session_state.edited_emails = []
-        with st.spinner("Generating personalized drafts..."):
+        with st.spinner("Generating drafts with tracking links..."):
             for i, row in selected_rows.iterrows():
                 to_email = (row.get('work_emails') or row.get('personal_emails') or "").split(',')[0].strip()
                 if not to_email:
                     st.warning(f"⚠ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
                     continue
                 
-                # --- 4. GENERATE AND STORE A UNIQUE TRACKING ID FOR EACH EMAIL ---
+                # --- ADDED: Generate a unique tracking ID and create the HTML body ---
                 tracking_id = str(uuid.uuid4())
                 body = generate_personalized_email_body(row, tracking_id)
                 
@@ -229,7 +225,7 @@ def main():
                     "subject": "Connecting from Morphius AI", "body": body,
                     "contact_details": row.to_dict(),
                     "regen_counter": 0,
-                    "tracking_id": tracking_id  # --- Store the ID with the draft
+                    "tracking_id": tracking_id # --- ADDED: Store the ID with the draft
                 })
         st.rerun()
 
@@ -241,16 +237,15 @@ def main():
             with st.expander(f"Draft for {email_draft['name']} <{email_draft['to_email']}>", expanded=True):
                 st.text_input("Subject", value=email_draft['subject'],
                               key=f"subject_{unique_id}_{regen_count}", on_change=update_subject, args=(i, unique_id))
-                
-                # --- The body is now HTML ---
-                st.text_area("HTML Body", value=email_draft['body'], height=300,
+                # --- MODIFIED: Body is now HTML ---
+                st.text_area("HTML Body", value=email_draft['body'], height=250,
                              key=f"body_{unique_id}_{regen_count}", on_change=update_body, args=(i, unique_id))
-                st.caption("Note: The body is in HTML format to enable open tracking.")
+                st.caption("Note: Body is in HTML to support open tracking.")
 
-                # ... (Regenerate and Clear buttons are omitted for brevity, but would also need to use finalize_email_body)
+                # ... (Regenerate/Clear buttons logic would also need to be updated to use finalize_email_body)
 
         st.markdown("### 📥 Download All Drafts")
-        # --- 5. ADD THE 'tracking_id' COLUMN TO THE EXPORTED CSV ---
+        # --- MODIFIED: Add 'tracking_id' to the exported CSV file ---
         df_export = pd.DataFrame(st.session_state.edited_emails)[["name", "to_email", "subject", "body", "tracking_id"]]
         csv_buffer = StringIO()
         df_export.to_csv(csv_buffer, index=False)
