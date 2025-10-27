@@ -53,6 +53,20 @@ def load_data(_client):
         st.warning(f"Could not load data. Error: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=10)
+def load_unsubscribe_count(_client):
+    """Loads the total number of unsubscribes from the database."""
+    if _client is None:
+        return 0
+    try:
+        db = _client[MONGO_DB_NAME]
+        # Count documents in the unsubscribe_list collection
+        count = db.unsubscribe_list.count_documents({})
+        return count
+    except Exception as e:
+        st.warning(f"Could not load unsubscribe count. Error: {e}")
+        return 0
+
 # ===============================
 # MAIN STREAMLIT APP
 # ===============================
@@ -67,6 +81,7 @@ def main():
     
     mongo_client = init_connection()
     df = load_data(mongo_client)
+    total_unsubscribes = load_unsubscribe_count(mongo_client) # Fetch unsubscribe count
 
     if mongo_client and df.empty:
         st.info("No email data to display yet. Send some emails and process replies to see the dashboard.")
@@ -78,6 +93,11 @@ def main():
     total_sent = df[df['event_type'] == 'initial_outreach'].shape[0]
     total_replies = df[df['event_type'].str.startswith('replied_', na=False)].shape[0]
     total_follow_ups = df[df['event_type'] == 'follow_up_sent'].shape[0]
+    
+    # --- NEW: Calculate Open Rate ---
+    # IMPORTANT: Assumes your 'open' events have event_type='email_opened'. Change if necessary.
+    total_opens = df[df['event_type'] == 'email_opened'].shape[0]
+    open_rate = (total_opens / total_sent * 100) if total_sent > 0 else 0
     
     positive_replies = df[df['interest_level'] == 'positive'].shape[0]
     negative_replies = df[df['interest_level'] == 'negative'].shape[0]
@@ -97,8 +117,8 @@ def main():
         st.markdown("This chart visualizes the journey from the initial email to a positive response.")
 
         funnel_data = {
-            'Stage': ["Initial Emails Sent", "Replies Received", "Positive Replies"],
-            'Count': [total_sent, total_replies, positive_replies]
+            'Stage': ["Initial Emails Sent", "Emails Opened", "Replies Received", "Positive Replies"],
+            'Count': [total_sent, total_opens, total_replies, positive_replies]
         }
         funnel_df = pd.DataFrame(funnel_data)
 
@@ -126,6 +146,17 @@ def main():
         with col3:
             st.metric(label="👍 Positive Replies", value=positive_replies)
             st.metric(label="👎 Negative Replies", value=negative_replies)
+
+        # --- NEW: Row for Open Rate and Unsubscribes ---
+        st.divider()
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            st.metric(label="👁️ Emails Opened", value=total_opens)
+        with col5:
+            st.metric(label="📈 Open Rate", value=f"{open_rate:.2f}%")
+        with col6:
+            st.metric(label="🚫 Unsubscribes", value=total_unsubscribes)
+
 
         st.divider()
 
@@ -167,7 +198,8 @@ def main():
             df_display = df
         
         # Format the timestamp for display in the dataframe
-        df_display['timestamp'] = df_display['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        if 'timestamp' in df_display.columns:
+            df_display['timestamp'] = df_display['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
         st.dataframe(df_display, use_container_width=True)
 
     # --- TIMEZONE FIX ---
