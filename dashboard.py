@@ -88,8 +88,7 @@ def main():
     total_sent = df[df['event_type'] == 'initial_outreach'].shape[0]
     total_replies = df[df['event_type'].str.startswith('replied_', na=False)].shape[0]
     total_follow_ups = df[df['event_type'] == 'follow_up_sent'].shape[0]
-    total_opens = df[df['event_type'] == 'email_opened'].shape[0]
-    open_rate = (total_opens / total_sent * 100) if total_sent > 0 else 0
+    # --- REMOVED open rate calculations ---
     positive_replies = df[df['interest_level'] == 'positive'].shape[0]
     negative_replies = df[df['interest_level'] == 'negative'].shape[0]
     reply_rate = (total_replies / total_sent * 100) if total_sent > 0 else 0
@@ -104,9 +103,10 @@ def main():
     with tab1:
         st.header("Email Outreach Funnel")
         st.markdown("This chart visualizes the journey from the initial email to a positive response.")
+        # --- MODIFIED: Removed "Emails Opened" from the funnel data ---
         funnel_data = {
-            'Stage': ["Initial Emails Sent", "Emails Opened", "Replies Received", "Positive Replies"],
-            'Count': [total_sent, total_opens, total_replies, positive_replies]
+            'Stage': ["Initial Emails Sent", "Replies Received", "Positive Replies"],
+            'Count': [total_sent, total_replies, positive_replies]
         }
         funnel_df = pd.DataFrame(funnel_data)
         bar_fig = px.bar(
@@ -134,17 +134,11 @@ def main():
             st.metric(label="👍 Positive Replies", value=positive_replies)
             st.metric(label="👎 Negative Replies", value=negative_replies)
 
-        # --- MODIFICATION: The divider that was here has been removed ---
-        
-        col4, col5, col6 = st.columns(3)
-        with col4:
-            st.metric(label="👁️ Emails Opened", value=total_opens)
-        with col5:
-            st.metric(label="📈 Open Rate", value=f"{open_rate:.2f}%")
-        with col6:
-            st.metric(label="🚫 Unsubscribes", value=total_unsubscribes)
+        # --- MODIFIED: Removed the row for Opens and Open Rate ---
+        # --- Moved Unsubscribes to its own metric display for clarity ---
+        st.metric(label="🚫 Unsubscribes", value=total_unsubscribes)
 
-        st.divider() # This divider remains to separate metrics from the charts below
+        st.divider() 
 
         st.header("Sentiment Analysis")
         col_pie, col_bar = st.columns(2)
