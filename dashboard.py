@@ -43,10 +43,6 @@ def load_data(_client):
         cursor = db.email_logs.find().sort('timestamp', -1)
         df = pd.DataFrame(list(cursor))
         if not df.empty and 'timestamp' in df.columns:
-            # --- TIMEZONE FIX ---
-            # 1. Convert timestamp column to datetime objects.
-            # 2. Localize them to UTC (since MongoDB stores in UTC).
-            # 3. Convert them to the desired display timezone (e.g., IST).
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize('UTC').dt.tz_convert(DISPLAY_TIMEZONE)
         return df
     except Exception as e:
@@ -60,7 +56,6 @@ def load_unsubscribe_count(_client):
         return 0
     try:
         db = _client[MONGO_DB_NAME]
-        # Count documents in the unsubscribe_list collection
         count = db.unsubscribe_list.count_documents({})
         return count
     except Exception as e:
@@ -81,7 +76,7 @@ def main():
     
     mongo_client = init_connection()
     df = load_data(mongo_client)
-    total_unsubscribes = load_unsubscribe_count(mongo_client) # Fetch unsubscribe count
+    total_unsubscribes = load_unsubscribe_count(mongo_client)
 
     if mongo_client and df.empty:
         st.info("No email data to display yet. Send some emails and process replies to see the dashboard.")
@@ -93,18 +88,12 @@ def main():
     total_sent = df[df['event_type'] == 'initial_outreach'].shape[0]
     total_replies = df[df['event_type'].str.startswith('replied_', na=False)].shape[0]
     total_follow_ups = df[df['event_type'] == 'follow_up_sent'].shape[0]
-    
-    # --- NEW: Calculate Open Rate ---
-    # IMPORTANT: Assumes your 'open' events have event_type='email_opened'. Change if necessary.
     total_opens = df[df['event_type'] == 'email_opened'].shape[0]
     open_rate = (total_opens / total_sent * 100) if total_sent > 0 else 0
-    
     positive_replies = df[df['interest_level'] == 'positive'].shape[0]
     negative_replies = df[df['interest_level'] == 'negative'].shape[0]
-    
     reply_rate = (total_replies / total_sent * 100) if total_sent > 0 else 0
     
-    # MODIFICATION: Use Markdown in tab labels to make them larger and bolder
     tab_labels = [
         "#### 📈 Campaign Funnel",
         "#### 📊 Key Metrics",
@@ -115,13 +104,11 @@ def main():
     with tab1:
         st.header("Email Outreach Funnel")
         st.markdown("This chart visualizes the journey from the initial email to a positive response.")
-
         funnel_data = {
             'Stage': ["Initial Emails Sent", "Emails Opened", "Replies Received", "Positive Replies"],
             'Count': [total_sent, total_opens, total_replies, positive_replies]
         }
         funnel_df = pd.DataFrame(funnel_data)
-
         bar_fig = px.bar(
             funnel_df, x='Count', y='Stage', orientation='h', text='Count',
             color='Stage', color_discrete_sequence=px.colors.sequential.Teal,
@@ -147,8 +134,8 @@ def main():
             st.metric(label="👍 Positive Replies", value=positive_replies)
             st.metric(label="👎 Negative Replies", value=negative_replies)
 
-        # --- NEW: Row for Open Rate and Unsubscribes ---
-        st.divider()
+        # --- MODIFICATION: The divider that was here has been removed ---
+        
         col4, col5, col6 = st.columns(3)
         with col4:
             st.metric(label="👁️ Emails Opened", value=total_opens)
@@ -157,8 +144,7 @@ def main():
         with col6:
             st.metric(label="🚫 Unsubscribes", value=total_unsubscribes)
 
-
-        st.divider()
+        st.divider() # This divider remains to separate metrics from the charts below
 
         st.header("Sentiment Analysis")
         col_pie, col_bar = st.columns(2)
@@ -197,13 +183,10 @@ def main():
         else:
             df_display = df
         
-        # Format the timestamp for display in the dataframe
         if 'timestamp' in df_display.columns:
             df_display['timestamp'] = df_display['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
         st.dataframe(df_display, use_container_width=True)
 
-    # --- TIMEZONE FIX ---
-    # Get current UTC time and convert it to the display timezone
     now_local = datetime.datetime.now(datetime.timezone.utc).astimezone(ZoneInfo(DISPLAY_TIMEZONE))
     last_updated_placeholder.text(f"Last updated: {now_local.strftime('%Y-%m-%d %H:%M:%S')} ({DISPLAY_TIMEZONE})")
     
