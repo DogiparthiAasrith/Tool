@@ -70,28 +70,6 @@ def append_unsubscribe_link(body_text, recipient_email):
 # ===============================
 # AI-POWERED LOGIC
 # ===============================
-def decode_prompt_to_domain(prompt):
-    try:
-        system_message = """
-        You are an expert business analyst. Respond with ONLY a lowercase keyword for the domain.
-        If uncertain, respond with 'general'.
-        """
-        response = client_ai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=10,
-            temperature=0.1,
-        )
-        domain = response.choices[0].message.content.strip().lower()
-        return domain
-    except Exception as e:
-        st.error(f"OpenAI API Error: {e}")
-        return None
-
-
 def get_fallback_template(domain, name, email=""):
     greeting = f"Dear Sir/Madam,"
     signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
@@ -141,51 +119,31 @@ def generate_personalized_email_body(contact_details):
 # MAIN STREAMLIT APP
 # ===============================
 def main():
-    st.title("📧 Morphius AI: Generate & Edit Email Drafts")
+    st.title("📧 Morphius AI — Email Automation")
 
     if 'edited_emails' not in st.session_state:
         st.session_state.edited_emails = []
-    if 'filter_domain' not in st.session_state:
-        st.session_state.filter_domain = None
 
     client_mongo, db = get_db_connection()
     if not client_mongo:
         return
 
-    st.header("Step 1: Filter Contacts by Prompt")
-    prompt = st.text_input("Enter a prompt (e.g., 'top 10 colleges', 'e-commerce startups')", key="prompt_input")
-    col1, col2 = st.columns(2)
-    with col1:
-        # MODIFICATION: Increased button size
-        if st.button("🔍 Filter Contacts", use_container_width=True):
-            if prompt:
-                domain = decode_prompt_to_domain(prompt)
-                if domain and domain != 'general':
-                    st.session_state.filter_domain = domain
-                    st.success(f"Filtered contacts for domain: {domain}")
-                else:
-                    st.session_state.filter_domain = None
-                    st.info("Prompt too general; showing all contacts.")
-                st.rerun()
-            else:
-                st.warning("Please enter a prompt first.")
-    with col2:
-        # MODIFICATION: Increased button size
-        if st.button("🔄 Show All Contacts", use_container_width=True):
-            st.session_state.filter_domain = None
-            st.rerun()
-
-    st.header("Step 2: Select Contacts & Generate Drafts")
+    st.header("Step 1: Select Contacts & Generate Drafts")
     contacts_df = fetch_cleaned_contacts(db)
     client_mongo.close()
+
     if contacts_df.empty:
         st.info("No contacts found.")
         return
 
+    # Create a dropdown for domain filtering
+    domains = ['All'] + sorted(contacts_df['domain'].astype(str).unique())
+    selected_domain = st.selectbox("Filter by Domain:", domains)
+
     display_df = contacts_df.copy()
-    if st.session_state.filter_domain:
-        display_df = contacts_df[contacts_df['domain'].str.contains(st.session_state.filter_domain, case=False, na=False)].copy()
-        st.info(f"Showing {len(display_df)} contacts matching domain '{st.session_state.filter_domain}'")
+    if selected_domain and selected_domain != 'All':
+        display_df = contacts_df[contacts_df['domain'] == selected_domain].copy()
+        st.info(f"Showing {len(display_df)} contacts matching domain '{selected_domain}'")
 
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
@@ -199,29 +157,30 @@ def main():
 
     if st.button(f"Generate Drafts for {len(selected_rows)} Selected Contacts", disabled=selected_rows.empty, use_container_width=True):
         st.session_state.edited_emails = []
-        for i, row in selected_rows.iterrows():
-            to_email = None
-            work_email_val = row.get('work_emails')
-            if isinstance(work_email_val, str) and work_email_val.strip():
-                to_email = work_email_val.split(',')[0].strip()
-            if not to_email:
-                personal_email_val = row.get('personal_emails')
-                if isinstance(personal_email_val, str) and personal_email_val.strip():
-                    to_email = personal_email_val.split(',')[0].strip()
-            if not to_email:
-                st.warning(f"⚠ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
-                continue
-            body = generate_personalized_email_body(row)
-            st.session_state.edited_emails.append({
-                "id": i, "name": row['name'], "to_email": to_email,
-                "subject": "Connecting from Morphius AI", "body": body,
-                "contact_details": row.to_dict(),
-                "regen_counter": 0
-            })
+        with st.spinner("Generating email drafts..."):
+            for i, row in selected_rows.iterrows():
+                to_email = None
+                work_email_val = row.get('work_emails')
+                if isinstance(work_email_val, str) and work_email_val.strip():
+                    to_email = work_email_val.split(',')[0].strip()
+                if not to_email:
+                    personal_email_val = row.get('personal_emails')
+                    if isinstance(personal_email_val, str) and personal_email_val.strip():
+                        to_email = personal_email_val.split(',')[0].strip()
+                if not to_email:
+                    st.warning(f"⚠ Skipped '{row.get('name', 'Unknown')}' - no valid email.")
+                    continue
+                body = generate_personalized_email_body(row)
+                st.session_state.edited_emails.append({
+                    "id": i, "name": row['name'], "to_email": to_email,
+                    "subject": "Connecting from Morphius AI", "body": body,
+                    "contact_details": row.to_dict(),
+                    "regen_counter": 0
+                })
         st.rerun()
 
     if st.session_state.edited_emails:
-        st.header("Step 3: Review & Edit Drafts")
+        st.header("Step 2: Review & Edit Drafts")
         for i, email_draft in enumerate(st.session_state.edited_emails):
             unique_id = email_draft['id']
             regen_count = email_draft['regen_counter']
@@ -257,6 +216,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
