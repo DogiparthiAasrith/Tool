@@ -63,7 +63,8 @@ def update_body(index, email_id):
 # UNSUBSCRIBE HELPER
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
-    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(email_to_follow_up)}"
+    # Corrected the variable from email_to_follow_up to recipient_email
+    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
     return body_text.strip() + unsubscribe_link
 
 
@@ -90,7 +91,11 @@ def generate_personalized_email_body(contact_details):
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
-    email = contact_details.get('work_emails') or contact_details.get('personal_emails', '')
+    # Ensure email is a string before processing
+    work_email = contact_details.get('work_emails', '')
+    personal_email = contact_details.get('personal_emails', '')
+    email = work_email if isinstance(work_email, str) and work_email else (personal_email if isinstance(personal_email, str) else '')
+
     greeting = f"Dear Sir/Madam,"
     signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
     try:
@@ -209,4 +214,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
