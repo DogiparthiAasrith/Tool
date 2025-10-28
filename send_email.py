@@ -63,6 +63,17 @@ def fetch_unsubscribed_emails(db):
         st.warning(f"⚠ Could not fetch unsubscribe lists. Error: {e}")
         return set()
 
+def remove_email_from_unsubscribe_lists(db, email):
+    """Removes an email from both unsubscribe collections."""
+    try:
+        email_lower = email.strip().lower()
+        # Case-insensitive removal
+        db.unsubscribed_emails.delete_many({'email': {'$regex': f'^{email_lower}$', '$options': 'i'}})
+        db.unsubscribe_list.delete_many({'email': {'$regex': f'^{email_lower}$', '$options': 'i'}})
+        return True
+    except Exception as e:
+        st.error(f"Failed to remove {email} from unsubscribe lists: {e}")
+        return False
 
 def update_subject(index, email_id):
     for i, email_draft in enumerate(st.session_state.edited_emails):
@@ -149,39 +160,64 @@ def main():
     if not client_mongo:
         return
 
-    # Fetch all unsubscribed emails from both lists
+    # Fetch all contacts and unsubscribe lists
     unsubscribed_emails_set = fetch_unsubscribed_emails(db)
-    
-    st.header("Step 1: Select Contacts & Generate Drafts")
     all_contacts_df = fetch_cleaned_contacts(db)
-    client_mongo.close()
 
     if all_contacts_df.empty:
-        st.info("No contacts found.")
+        st.info("No contacts found in the database.")
         return
 
-    # Filter out contacts who are in the unsubscribed list
+    # Helper to check if a contact's emails are in the unsubscribe set
     def is_email_subscribed(email_str):
         if not isinstance(email_str, str) or not email_str.strip():
-            return True  # Not a valid email string, so can't be unsubscribed
+            return True
         emails = [e.strip().lower() for e in email_str.split(',')]
         return not any(e in unsubscribed_emails_set for e in emails)
 
-    subscribed_mask_work = all_contacts_df['work_emails'].apply(is_email_subscribed)
-    subscribed_mask_personal = all_contacts_df['personal_emails'].apply(is_email_subscribed)
+    # Separate subscribed and unsubscribed contacts
+    subscribed_mask = all_contacts_df['work_emails'].apply(is_email_subscribed) & \
+                      all_contacts_df['personal_emails'].apply(is_email_subscribed)
     
-    contacts_df = all_contacts_df[subscribed_mask_work & subscribed_mask_personal].copy()
-    
-    num_filtered = len(all_contacts_df) - len(contacts_df)
-    if num_filtered > 0:
-        st.info(f"ℹ️ {num_filtered} contacts were hidden because they have unsubscribed.")
+    contacts_df = all_contacts_df[subscribed_mask].copy()
+    unsubscribed_df = all_contacts_df[~subscribed_mask].copy()
 
+    # Display unsubscribed contacts and resubscribe option
+    if not unsubscribed_df.empty:
+        with st.expander(f"ℹ️ {len(unsubscribed_df)} Unsubscribed Contacts"):
+            for _, row in unsubscribed_df.iterrows():
+                unsubscribed_emails_in_row = []
+                work_emails = row.get('work_emails', '')
+                personal_emails = row.get('personal_emails', '')
+
+                if isinstance(work_emails, str):
+                    for email in work_emails.split(','):
+                        if email.strip().lower() in unsubscribed_emails_set:
+                            unsubscribed_emails_in_row.append(email.strip())
+                
+                if isinstance(personal_emails, str):
+                    for email in personal_emails.split(','):
+                        if email.strip().lower() in unsubscribed_emails_set:
+                            unsubscribed_emails_in_row.append(email.strip())
+                
+                for email_to_resubscribe in set(unsubscribed_emails_in_row):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"**{row.get('name', 'N/A')}**: {email_to_resubscribe}")
+                    with col2:
+                        if st.button("Resubscribe", key=f"resub_{email_to_resubscribe}"):
+                            if remove_email_from_unsubscribe_lists(db, email_to_resubscribe):
+                                st.toast(f"'{email_to_resubscribe}' has been resubscribed.")
+                                st.rerun()
+                            # Error is handled within the function
+
+    st.header("Step 1: Select Contacts & Generate Drafts")
     if contacts_df.empty:
         st.info("No available contacts to display.")
+        client_mongo.close()
         return
 
     display_df = contacts_df.copy()
-
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
 
@@ -250,6 +286,7 @@ def main():
         df_export.to_csv(csv_buffer, index=False)
         st.download_button("📥 Download Drafts as CSV", data=csv_buffer.getvalue(), file_name="morphius_email_drafts.csv", mime="text/csv", use_container_width=True)
 
+    client_mongo.close()
 
 if __name__ == "__main__":
     main()
