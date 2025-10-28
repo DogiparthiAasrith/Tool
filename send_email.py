@@ -42,6 +42,27 @@ def fetch_cleaned_contacts(db):
         st.warning(f"⚠ Could not fetch contacts. Error: {e}")
         return pd.DataFrame()
 
+def fetch_unsubscribed_emails(db):
+    """Fetches emails from both unsubscribe collections."""
+    unsubscribed = set()
+    try:
+        # Fetch from manual unsubscribe link clicks
+        cursor1 = db.unsubscribed_emails.find({}, {'email': 1})
+        for doc in cursor1:
+            if 'email' in doc and isinstance(doc['email'], str):
+                unsubscribed.add(doc['email'].strip().lower())
+
+        # Fetch from follow-up unsubscribe list
+        cursor2 = db.unsubscribe_list.find({}, {'email': 1})
+        for doc in cursor2:
+            if 'email' in doc and isinstance(doc['email'], str):
+                unsubscribed.add(doc['email'].strip().lower())
+        
+        return unsubscribed
+    except Exception as e:
+        st.warning(f"⚠ Could not fetch unsubscribe lists. Error: {e}")
+        return set()
+
 
 def update_subject(index, email_id):
     for i, email_draft in enumerate(st.session_state.edited_emails):
@@ -63,7 +84,6 @@ def update_body(index, email_id):
 # UNSUBSCRIBE HELPER
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
-    # Corrected the variable from email_to_follow_up to recipient_email
     unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
     return body_text.strip() + unsubscribe_link
 
@@ -91,11 +111,7 @@ def generate_personalized_email_body(contact_details):
     name = contact_details.get('name')
     domain = contact_details.get('domain', 'their industry')
     linkedin = contact_details.get('linkedin_url', '')
-    # Ensure email is a string before processing
-    work_email = contact_details.get('work_emails', '')
-    personal_email = contact_details.get('personal_emails', '')
-    email = work_email if isinstance(work_email, str) and work_email else (personal_email if isinstance(personal_email, str) else '')
-
+    email = contact_details.get('work_emails') or contact_details.get('personal_emails', '')
     greeting = f"Dear Sir/Madam,"
     signature = "\n\nBest regards,\nD.Aasrith\nEmployee, Morphius AI\nhttps://www.morphius.in/"
     try:
@@ -133,12 +149,35 @@ def main():
     if not client_mongo:
         return
 
+    # Fetch all unsubscribed emails from both lists
+    unsubscribed_emails_set = fetch_unsubscribed_emails(db)
+    
     st.header("Step 1: Select Contacts & Generate Drafts")
-    contacts_df = fetch_cleaned_contacts(db)
+    all_contacts_df = fetch_cleaned_contacts(db)
     client_mongo.close()
 
-    if contacts_df.empty:
+    if all_contacts_df.empty:
         st.info("No contacts found.")
+        return
+
+    # Filter out contacts who are in the unsubscribed list
+    def is_email_subscribed(email_str):
+        if not isinstance(email_str, str) or not email_str.strip():
+            return True  # Not a valid email string, so can't be unsubscribed
+        emails = [e.strip().lower() for e in email_str.split(',')]
+        return not any(e in unsubscribed_emails_set for e in emails)
+
+    subscribed_mask_work = all_contacts_df['work_emails'].apply(is_email_subscribed)
+    subscribed_mask_personal = all_contacts_df['personal_emails'].apply(is_email_subscribed)
+    
+    contacts_df = all_contacts_df[subscribed_mask_work & subscribed_mask_personal].copy()
+    
+    num_filtered = len(all_contacts_df) - len(contacts_df)
+    if num_filtered > 0:
+        st.info(f"ℹ️ {num_filtered} contacts were hidden because they have unsubscribed.")
+
+    if contacts_df.empty:
+        st.info("No available contacts to display.")
         return
 
     display_df = contacts_df.copy()
