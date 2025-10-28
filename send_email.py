@@ -136,14 +136,7 @@ def main():
         st.info("No contacts found.")
         return
 
-    # Create a dropdown for domain filtering
-    domains = ['All'] + sorted(contacts_df['domain'].astype(str).unique())
-    selected_domain = st.selectbox("Filter by Domain:", domains)
-
     display_df = contacts_df.copy()
-    if selected_domain and selected_domain != 'All':
-        display_df = contacts_df[contacts_df['domain'] == selected_domain].copy()
-        st.info(f"Showing {len(display_df)} contacts matching domain '{selected_domain}'")
 
     if 'Select' not in display_df.columns:
         display_df.insert(0, "Select", False)
