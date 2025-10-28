@@ -192,7 +192,7 @@ def process_follow_ups(db):
         {'$match': {
             '_id': {'$nin': replied_emails},
             'last_contact_time': {'$lt': waiting_period},
-            'outreach_count': {'$lt': 100}
+            'outreach_count': {'$lt': 1}
         }}
     ]
     
@@ -315,6 +315,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
