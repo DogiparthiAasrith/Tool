@@ -63,7 +63,7 @@ def update_body(index, email_id):
 # UNSUBSCRIBE HELPER
 # ===============================
 def append_unsubscribe_link(body_text, recipient_email):
-    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-5v1tdqur8-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(recipient_email)}"
+    unsubscribe_link = f"\n\nIf you prefer not to receive future emails, you can unsubscribe here: https://unsubscribe-52pwl9yyy-gowthami-gs-projects.vercel.app/unsubscribe?email={quote(email_to_follow_up)}"
     return body_text.strip() + unsubscribe_link
 
 
@@ -209,3 +209,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
