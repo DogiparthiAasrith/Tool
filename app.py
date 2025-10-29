@@ -48,7 +48,7 @@ with st.sidebar:
     # **MODIFICATION:** Add "Download Data" to the navigation options
     page = st.radio(
         "📍 Navigate to:",
-        ("ContactOut", "AI Web Scraper", "Cleaned Data", "Generate & Edit Emails", "Send Emails", "Handle Replies", "Dashboard", "Download Data")
+        ("Collect Contacts", "AI Web Scraper", "Show Cleaned Data", "Generate & Edit Emails", "Email Preview", "Handle Replies", "Dashboard", "Download Data")
     )
 
     st.markdown("---")
@@ -85,3 +85,5 @@ elif page == "Download Data":
 # FOOTER
 # ===============================
 st.markdown('<div class="footer">📬 Efficient. Smart. Automated — Powered by Morphius AI</div>', unsafe_allow_html=True)
+
+
