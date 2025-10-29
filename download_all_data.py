@@ -13,7 +13,8 @@ load_dotenv()
 # ===============================
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
-COLLECTION_NAMES = ["cleaned_contacts", "contacts", "scraped_contacts", "email_logs", "unsubscribe_list"]
+# Add "unsubscribed_emails" to this list
+COLLECTION_NAMES = ["cleaned_contacts", "contacts", "scraped_contacts", "email_logs", "unsubscribe_list", "unsubscribed_emails"]
 
 # ===============================
 # DATABASE & DATA FUNCTIONS
