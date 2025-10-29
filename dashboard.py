@@ -51,13 +51,21 @@ def load_data(_client):
 
 @st.cache_data(ttl=10)
 def load_unsubscribe_count(_client):
-    """Loads the total number of unsubscribes from the database."""
+    """
+    Loads the total number of unsubscribes by summing counts from both
+    'unsubscribe_list' and 'unsubscribed_emails' collections.
+    """
     if _client is None:
         return 0
     try:
         db = _client[MONGO_DB_NAME]
-        count = db.unsubscribe_list.count_documents({})
-        return count
+        # Count documents in the first collection
+        count_from_list = db.unsubscribe_list.count_documents({})
+        # Count documents in the second collection
+        count_from_emails = db.unsubscribed_emails.count_documents({})
+        # Return the sum of both counts
+        total_unsubscribes = count_from_list + count_from_emails
+        return total_unsubscribes
     except Exception as e:
         st.warning(f"Could not load unsubscribe count. Error: {e}")
         return 0
